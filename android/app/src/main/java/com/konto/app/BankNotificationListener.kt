@@ -1,7 +1,9 @@
 package com.konto.app
 
 import android.app.Notification
+import android.content.ComponentName
 import android.content.Context
+import android.os.Build
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import android.util.Log
@@ -18,37 +20,126 @@ class BankNotificationListener : NotificationListenerService() {
 
         private var lastNotificationHash: String? = null
         private var lastNotificationTime: Long = 0L
+
+        fun requestRebindIfPossible(context: Context) {
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                    val component = ComponentName(context, BankNotificationListener::class.java)
+                    requestRebind(component)
+                    Log.d(TAG, "requestRebind solicitado con éxito para BankNotificationListener")
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "No se pudo solicitar requestRebind", e)
+            }
+        }
+    }
+
+    override fun onListenerConnected() {
+        super.onListenerConnected()
+        Log.i(TAG, "BankNotificationListener CONECTADO y escuchando notificaciones activamente")
+    }
+
+    override fun onListenerDisconnected() {
+        super.onListenerDisconnected()
+        Log.w(TAG, "BankNotificationListener DESCONECTADO por el sistema. Intentando reconectar...")
+        requestRebindIfPossible(this)
     }
 
     override fun onNotificationPosted(sbn: StatusBarNotification?) {
         super.onNotificationPosted(sbn)
         if (sbn == null) return
 
-        // 1. Ignorar notificaciones persistentes (ej. reproductor de música, descargas)
+        // 1. Ignorar notificaciones persistentes (ej. reproductor de música, descargas en curso)
         if (sbn.isOngoing) {
             return
         }
 
         val extras = sbn.notification?.extras ?: return
-        val title = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString()?.trim() ?: ""
-        val text = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString()?.trim() ?: ""
         val packageName = sbn.packageName?.trim() ?: ""
 
-        val combinedContent = "$title $text"
+        // Extraer todos los campos de texto posibles que usan las apps bancarias y wallets
+        val title = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString()?.trim()
+            ?: extras.getCharSequence(Notification.EXTRA_TITLE_BIG)?.toString()?.trim()
+            ?: ""
 
-        // 2. Filtro inteligente para capturar Swedbank o notificaciones bancarias compatibles
-        val isSwedbankPackage = packageName.contains("swedbank", ignoreCase = true)
-        val hasSwedbankKeyword = combinedContent.contains("swedbank", ignoreCase = true)
+        val bigText = extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString()?.trim() ?: ""
+        val normalText = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString()?.trim() ?: ""
+        val subText = extras.getCharSequence(Notification.EXTRA_SUB_TEXT)?.toString()?.trim() ?: ""
+        val infoText = extras.getCharSequence(Notification.EXTRA_INFO_TEXT)?.toString()?.trim() ?: ""
+
+        // Seleccionar el cuerpo de texto más informativo disponible
+        val text = when {
+            bigText.isNotEmpty() -> bigText
+            normalText.isNotEmpty() -> normalText
+            subText.isNotEmpty() -> subText
+            infoText.isNotEmpty() -> infoText
+            else -> ""
+        }
+
+        val combinedContent = "$title $text $subText $infoText".trim()
+
+        // 2. Filtro inteligente para capturar Swedbank, Google Wallet y cualquier app bancaria o de pago
+        val isKnownBankOrWallet = packageName.contains("swedbank", ignoreCase = true) ||
+                packageName.contains("wallet", ignoreCase = true) ||
+                packageName.contains("revolut", ignoreCase = true) ||
+                packageName.contains("bbva", ignoreCase = true) ||
+                packageName.contains("santander", ignoreCase = true) ||
+                packageName.contains("caixabank", ignoreCase = true) ||
+                packageName.contains("caixa", ignoreCase = true) ||
+                packageName.contains("ing", ignoreCase = true) ||
+                packageName.contains("n26", ignoreCase = true) ||
+                packageName.contains("imagin", ignoreCase = true) ||
+                packageName.contains("sabadell", ignoreCase = true) ||
+                packageName.contains("openbank", ignoreCase = true) ||
+                packageName.contains("kutxa", ignoreCase = true) ||
+                packageName.contains("abanca", ignoreCase = true) ||
+                packageName.contains("unicaja", ignoreCase = true) ||
+                packageName.contains("cajarural", ignoreCase = true) ||
+                packageName.contains("wise", ignoreCase = true) ||
+                packageName.contains("paypal", ignoreCase = true) ||
+                packageName.contains("bank", ignoreCase = true) ||
+                packageName.contains("pank", ignoreCase = true)
+
+        val hasCurrency = combinedContent.contains("EUR", ignoreCase = true) ||
+                combinedContent.contains("€") ||
+                combinedContent.contains("$") ||
+                combinedContent.contains("£") ||
+                combinedContent.contains("kr", ignoreCase = true)
+
+        val hasTransactionKeyword = combinedContent.contains("paid", ignoreCase = true) ||
+                combinedContent.contains("payment", ignoreCase = true) ||
+                combinedContent.contains("purchase", ignoreCase = true) ||
+                combinedContent.contains("spent", ignoreCase = true) ||
+                combinedContent.contains("received", ignoreCase = true) ||
+                combinedContent.contains("credited", ignoreCase = true) ||
+                combinedContent.contains("pago", ignoreCase = true) ||
+                combinedContent.contains("compra", ignoreCase = true) ||
+                combinedContent.contains("pagado", ignoreCase = true) ||
+                combinedContent.contains("tarjeta", ignoreCase = true) ||
+                combinedContent.contains("cargo", ignoreCase = true) ||
+                combinedContent.contains("bizum", ignoreCase = true) ||
+                combinedContent.contains("recibo", ignoreCase = true) ||
+                combinedContent.contains("transferencia", ignoreCase = true) ||
+                combinedContent.contains("ingreso", ignoreCase = true) ||
+                combinedContent.contains("abono", ignoreCase = true) ||
+                combinedContent.contains("disposición", ignoreCase = true) ||
+                combinedContent.contains("retirada", ignoreCase = true) ||
+                combinedContent.contains("laekumine", ignoreCase = true) ||
+                combinedContent.contains("makse", ignoreCase = true) ||
+                combinedContent.contains("kaarditehing", ignoreCase = true) ||
+                combinedContent.contains("ost", ignoreCase = true)
+
         val hasTransactionPatterns = combinedContent.contains("paid at", ignoreCase = true) ||
                 combinedContent.contains("paid to", ignoreCase = true) ||
-                combinedContent.contains("received from", ignoreCase = true) ||
-                (combinedContent.contains("EUR", ignoreCase = true) &&
-                        (combinedContent.contains("paid", ignoreCase = true) ||
-                                combinedContent.contains("received", ignoreCase = true) ||
-                                combinedContent.contains("pago", ignoreCase = true) ||
-                                combinedContent.contains("ingreso", ignoreCase = true)))
+                combinedContent.contains("received from", ignoreCase = true)
 
-        if (!isSwedbankPackage && !hasSwedbankKeyword && !hasTransactionPatterns) {
+        // Capturar si proviene de una app bancaria conocida, o si contiene moneda + palabra clave de transacción
+        val isFinancialNotification = isKnownBankOrWallet ||
+                (hasCurrency && hasTransactionKeyword) ||
+                hasTransactionPatterns ||
+                combinedContent.contains("swedbank", ignoreCase = true)
+
+        if (!isFinancialNotification) {
             return
         }
 
@@ -64,17 +155,60 @@ class BankNotificationListener : NotificationListenerService() {
 
         Log.i(TAG, "Notificación bancaria interceptada con éxito: [$packageName] $combinedContent")
 
-        // 4. Si MainActivity está en ejecución, inyectar inmediatamente en el WebView
+        // 4. Extraer monto, comercio y categoria resuelta para la notificación interactiva de Konto
+        val monto = KontoNotificationManager.extraerMonto(combinedContent)
+        val comercio = KontoNotificationManager.extraerComercio(combinedContent)
+        val (categoriaId, nombreCategoria) = KontoNotificationManager.resolverCategoria(this, combinedContent, comercio)
+        val txId = "tx-noti-${System.currentTimeMillis()}-${(100..999).random()}"
+
+        // 5. Emitir SIEMPRE la notificación nativa interactiva de Konto en la barra de Android
+        KontoNotificationManager.mostrarNotificacionGasto(
+            context = this,
+            txId = txId,
+            monto = if (monto > 0) monto else 0.0,
+            comercio = comercio,
+            categoriaId = categoriaId,
+            nombreCategoria = nombreCategoria
+        )
+
+        // 6. Si MainActivity está en ejecución, inyectar inmediatamente en el WebView
         val activity = MainActivity.activeInstance
         if (activity != null && !activity.isFinishing && !activity.isDestroyed) {
-            activity.dispatchNotification(title, text, packageName)
+            activity.dispatchTransactionDetails(
+                title = title,
+                text = text,
+                packageName = packageName,
+                txId = txId,
+                monto = monto,
+                comercio = comercio,
+                categoriaId = categoriaId,
+                nombreCategoria = nombreCategoria
+            )
         } else {
-            // 5. Si la app está en segundo plano o cerrada, guardar en SharedPreferences para procesar al abrir
-            guardarEnColaPendientes(title, text, packageName)
+            // 7. Si la app está en segundo plano o cerrada, guardar en SharedPreferences con todos los detalles
+            guardarEnColaPendientes(
+                title = title,
+                text = text,
+                packageName = packageName,
+                txId = txId,
+                monto = monto,
+                comercio = comercio,
+                categoriaId = categoriaId,
+                nombreCategoria = nombreCategoria
+            )
         }
     }
 
-    private fun guardarEnColaPendientes(title: String, text: String, packageName: String) {
+    private fun guardarEnColaPendientes(
+        title: String,
+        text: String,
+        packageName: String,
+        txId: String,
+        monto: Double,
+        comercio: String,
+        categoriaId: String,
+        nombreCategoria: String
+    ) {
         try {
             val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             val jsonString = prefs.getString(KEY_PENDING, "[]") ?: "[]"
@@ -84,6 +218,11 @@ class BankNotificationListener : NotificationListenerService() {
                 put("title", title)
                 put("text", text)
                 put("packageName", packageName)
+                put("txId", txId)
+                put("monto", monto)
+                put("comercio", comercio)
+                put("categoriaId", categoriaId)
+                put("nombreCategoria", nombreCategoria)
                 put("timestamp", System.currentTimeMillis())
             }
 

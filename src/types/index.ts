@@ -176,6 +176,16 @@ export interface CicloCerrado {
 
 export type TabType = 'inicio' | 'analisis' | 'fijos' | 'ajustes';
 
+export interface GastoDetectadoPayload {
+  id: string;
+  importe: number;
+  comercio: string;
+  categoriaId: string;
+  categoriaNombre: string;
+  rawText: string;
+  packageName?: string;
+}
+
 declare global {
   interface Window {
     onBankNotificationReceived?: (
@@ -183,6 +193,10 @@ declare global {
       text?: string,
       packageName?: string
     ) => void;
+    onKontoExpenseDetected?: (data: GastoDetectadoPayload) => void;
+    onKontoNotificationConfirmed?: (txId: string) => void;
+    onKontoOpenModifyCategory?: (txId: string) => void;
+    onKontoBatchConfirmTransactions?: (txIds: string[]) => void;
     onPermissionStatusChecked?: (granted: boolean) => void;
     onOcrResult?: (data: OcrResultPayload) => void;
     onOcrError?: (error: string) => void;
@@ -198,6 +212,7 @@ declare global {
       requestIgnoreBatteryOptimizations?: () => void;
       openAppInfoSettings?: () => void;
       vibrate?: (ms: number) => void;
+      syncCategoriesAndDictionary?: (categoriesJson: string, dictionaryJson: string) => void;
     };
   }
 }

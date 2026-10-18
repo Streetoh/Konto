@@ -66,8 +66,10 @@ import { ScreenshotImportModal } from './components/ScreenshotImportModal';
 import { RadarSuscripcionesBanner } from './components/RadarSuscripcionesBanner';
 import { CierreCicloModal } from './components/CierreCicloModal';
 import { KontoWrappedModal } from './components/KontoWrappedModal';
+import { ModifyCategoryModal } from './components/ModifyCategoryModal';
 import { Camera, Plus, CalendarCheck2 } from 'lucide-react';
 import { vibrate } from './utils/haptics';
+import type { GastoDetectadoPayload } from './types';
 
 export function App() {
   // 1. Estados inicializados desde localStorage
@@ -98,6 +100,7 @@ export function App() {
   const [modalImportarCapturaAbierto, setModalImportarCapturaAbierto] = useState(false);
   const [modalCierreCicloAbierto, setModalCierreCicloAbierto] = useState(false);
   const [modalWrappedAbierto, setModalWrappedAbierto] = useState(false);
+  const [txParaModificarCategoria, setTxParaModificarCategoria] = useState<TransaccionVariable | null>(null);
   const [toastNotificacion, setToastNotificacion] = useState<ToastData | null>(null);
 
   // Referencias mutables para el Android Bridge Hook
@@ -365,7 +368,8 @@ export function App() {
     modalNuevaTxAbierto ||
     modalImportarCapturaAbierto ||
     modalCierreCicloAbierto ||
-    modalWrappedAbierto;
+    modalWrappedAbierto ||
+    txParaModificarCategoria !== null;
 
   const historyPushedRef = useRef(false);
 
@@ -395,6 +399,7 @@ export function App() {
         setModalImportarCapturaAbierto(false);
         setModalCierreCicloAbierto(false);
         setModalWrappedAbierto(false);
+        setTxParaModificarCategoria(null);
       }
     };
 
@@ -403,6 +408,20 @@ export function App() {
       window.removeEventListener('popstate', handlePopState);
     };
   }, []);
+
+  // 1.2 SINCRONIZACIÓN DE CATEGORÍAS Y DICCIONARIO A ANDROID NATIVO
+  useEffect(() => {
+    if (typeof window !== 'undefined' && window.AndroidBridge?.syncCategoriesAndDictionary) {
+      try {
+        window.AndroidBridge.syncCategoriesAndDictionary(
+          JSON.stringify(categorias),
+          JSON.stringify(diccionario)
+        );
+      } catch (e) {
+        console.warn('Error sincronizando categorías con Android:', e);
+      }
+    }
+  }, [categorias, diccionario]);
 
   // 4. PUENTE GLOBAL PARA ANDROID (Bridge Hook)
   useEffect(() => {
@@ -418,14 +437,76 @@ export function App() {
       if (title && !esPrefijoBanco && !text.toLowerCase().includes(lowerTitle)) {
         combined = `${title}. ${text}`;
       }
+      if (!combined.trim() && title.trim()) {
+        combined = title.trim();
+      }
 
       if (combined.trim()) {
         handleSimularTextoNotificacion(combined.trim(), packageName || 'ee.swedbank.mobile');
       }
     };
 
+    // Gasto detectado enriquecido desde Android
+    window.onKontoExpenseDetected = (data: GastoDetectadoPayload) => {
+      setTransacciones((prev) => {
+        if (prev.some((t) => t.id === data.id)) return prev;
+        const nuevaTx: TransaccionVariable = {
+          id: data.id,
+          fecha: new Date().toISOString(),
+          importe: data.importe,
+          tipo: 'gasto',
+          comercio: data.comercio,
+          categoriaId: data.categoriaId,
+          confirmado: false,
+          origenNotificacion: true,
+        };
+        return [nuevaTx, ...prev];
+      });
+
+      setToastNotificacion({
+        id: data.id,
+        comercio: data.comercio,
+        importe: data.importe,
+        tipo: 'gasto',
+        categoriaNombre: data.categoriaNombre,
+        categoriaSugerida: true,
+      });
+    };
+
+    // Confirmación rápida desde acción de la notificación ("✓ Aceptar")
+    window.onKontoNotificationConfirmed = (txId: string) => {
+      vibrate(20);
+      setTransacciones((prev) =>
+        prev.map((t) => (t.id === txId ? { ...t, confirmado: true } : t))
+      );
+    };
+
+    // Abrir modal de modificar categoría desde acción ("✎ Modificar")
+    window.onKontoOpenModifyCategory = (txId: string) => {
+      setTransacciones((prev) => {
+        const encontrada = prev.find((t) => t.id === txId);
+        if (encontrada) {
+          setTxParaModificarCategoria(encontrada);
+        }
+        return prev;
+      });
+    };
+
+    // Confirmaciones acumuladas offline
+    window.onKontoBatchConfirmTransactions = (txIds: string[]) => {
+      if (!txIds || txIds.length === 0) return;
+      const setIds = new Set(txIds);
+      setTransacciones((prev) =>
+        prev.map((t) => (setIds.has(t.id) ? { ...t, confirmado: true } : t))
+      );
+    };
+
     return () => {
       delete window.onBankNotificationReceived;
+      delete window.onKontoExpenseDetected;
+      delete window.onKontoNotificationConfirmed;
+      delete window.onKontoOpenModifyCategory;
+      delete window.onKontoBatchConfirmTransactions;
     };
   }, [handleSimularTextoNotificacion]);
 
@@ -934,6 +1015,14 @@ export function App() {
           transacciones={transacciones}
           resumenActual={resumen}
           onGenerarCiclosEjemplo={handleGenerarCiclosEjemplo}
+        />
+
+        {/* Modal Interactivo para Modificar Categoría de Gasto Detectado */}
+        <ModifyCategoryModal
+          transaccion={txParaModificarCategoria}
+          categorias={categorias}
+          onCerrar={() => setTxParaModificarCategoria(null)}
+          onAsignarCategoria={handleConfirmarConCategoria}
         />
       </div>
     </div>

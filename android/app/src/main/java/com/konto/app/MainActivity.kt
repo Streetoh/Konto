@@ -46,6 +46,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var assetLoader: WebViewAssetLoader
     private var isPageLoaded = false
     private var fileUploadCallback: ValueCallback<Array<Uri>>? = null
+    private var pendingModifyTxId: String? = null
 
     private val fileChooserLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -234,6 +235,25 @@ class MainActivity : AppCompatActivity() {
         }
 
         @JavascriptInterface
+        fun rebindNotificationListener() {
+            BankNotificationListener.requestRebindIfPossible(this@MainActivity)
+        }
+
+        @JavascriptInterface
+        fun syncCategoriesAndDictionary(categoriesJson: String, dictionaryJson: String) {
+            try {
+                val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                prefs.edit()
+                    .putString("cached_categories", categoriesJson)
+                    .putString("cached_dictionary", dictionaryJson)
+                    .apply()
+                Log.d(TAG, "Categorías y diccionario sincronizados en SharedPreferences")
+            } catch (e: Exception) {
+                Log.e(TAG, "Error sincronizando categorías", e)
+            }
+        }
+
+        @JavascriptInterface
         fun vibrate(durationMs: Long) {
             try {
                 val vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -330,6 +350,12 @@ class MainActivity : AppCompatActivity() {
         // Cargar la aplicación SPA a través del dominio virtual seguro de assets
         val intentData = intent?.dataString
         val actionExtra = intent?.getStringExtra("action")
+        val txIdExtra = intent?.getStringExtra("tx_id")
+
+        if (actionExtra == "modify_category" && !txIdExtra.isNullOrEmpty()) {
+            pendingModifyTxId = txIdExtra
+        }
+
         val initialUrl = if (intentData?.contains("action=new_expense") == true || actionExtra == "new_expense") {
             "https://appassets.androidplatform.net/assets/dist/index.html?action=new_expense"
         } else {
@@ -343,6 +369,19 @@ class MainActivity : AppCompatActivity() {
         setIntent(intent)
         val intentData = intent.dataString
         val actionExtra = intent.getStringExtra("action")
+        val txIdExtra = intent.getStringExtra("tx_id")
+
+        if (actionExtra == "modify_category" && !txIdExtra.isNullOrEmpty()) {
+            runOnUiThread {
+                val safeTxId = escapeJsString(txIdExtra)
+                webView.evaluateJavascript(
+                    "if (typeof window !== 'undefined' && typeof window.onKontoOpenModifyCategory === 'function') { window.onKontoOpenModifyCategory('$safeTxId'); }",
+                    null
+                )
+            }
+            return
+        }
+
         if (intentData?.contains("action=new_expense") == true || actionExtra == "new_expense") {
             runOnUiThread {
                 val jsCode = """
@@ -428,6 +467,15 @@ class MainActivity : AppCompatActivity() {
                 isPageLoaded = true
                 drenarNotificacionesPendientes()
                 notificarEstadoPermisoAReact()
+
+                if (pendingModifyTxId != null) {
+                    val safeTxId = escapeJsString(pendingModifyTxId!!)
+                    webView.evaluateJavascript(
+                        "if (typeof window !== 'undefined' && typeof window.onKontoOpenModifyCategory === 'function') { window.onKontoOpenModifyCategory('$safeTxId'); }",
+                        null
+                    )
+                    pendingModifyTxId = null
+                }
             }
 
             override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
@@ -452,6 +500,7 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         activeInstance = this
+        BankNotificationListener.requestRebindIfPossible(this)
         if (isPageLoaded) {
             drenarNotificacionesPendientes()
             notificarEstadoPermisoAReact()
@@ -476,12 +525,92 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
+     * Inyecta la transacción enriquecida directamente en React ejecutando window.onKontoExpenseDetected()
+     */
+    fun dispatchTransactionDetails(
+        title: String,
+        text: String,
+        packageName: String,
+        txId: String,
+        monto: Double,
+        comercio: String,
+        categoriaId: String,
+        nombreCategoria: String
+    ) {
+        runOnUiThread {
+            if (!isPageLoaded) {
+                val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                val jsonString = prefs.getString(KEY_PENDING, "[]") ?: "[]"
+                val array = JSONArray(jsonString)
+                val item = JSONObject().apply {
+                    put("title", title)
+                    put("text", text)
+                    put("packageName", packageName)
+                    put("txId", txId)
+                    put("monto", monto)
+                    put("comercio", comercio)
+                    put("categoriaId", categoriaId)
+                    put("nombreCategoria", nombreCategoria)
+                    put("timestamp", System.currentTimeMillis())
+                }
+                array.put(item)
+                prefs.edit().putString(KEY_PENDING, array.toString()).apply()
+                return@runOnUiThread
+            }
+
+            val safeTitle = escapeJsString(title)
+            val safeText = escapeJsString(text)
+            val safePkg = escapeJsString(packageName)
+            val safeTxId = escapeJsString(txId)
+            val safeComercio = escapeJsString(comercio)
+            val safeCatId = escapeJsString(categoriaId)
+            val safeCatNombre = escapeJsString(nombreCategoria)
+
+            val jsCode = """
+                (function() {
+                    if (typeof window.onKontoExpenseDetected === 'function') {
+                        window.onKontoExpenseDetected({
+                            id: '$safeTxId',
+                            importe: $monto,
+                            comercio: '$safeComercio',
+                            categoriaId: '$safeCatId',
+                            categoriaNombre: '$safeCatNombre',
+                            rawText: '$safeTitle. $safeText',
+                            packageName: '$safePkg'
+                        });
+                    } else if (typeof window.onBankNotificationReceived === 'function') {
+                        window.onBankNotificationReceived('$safeTitle', '$safeText', '$safePkg');
+                    }
+                })();
+            """.trimIndent()
+
+            webView.evaluateJavascript(jsCode) { result ->
+                Log.d(TAG, "Resultado JS al evaluar transacción detectada: $result")
+            }
+        }
+    }
+
+    /**
+     * Confirma una transacción en tiempo real en React cuando se pulsa Aceptar en la barra de Android
+     */
+    fun confirmTransactionFromNotification(txId: String) {
+        runOnUiThread {
+            val safeTxId = escapeJsString(txId)
+            val jsCode = """
+                if (typeof window !== 'undefined' && typeof window.onKontoNotificationConfirmed === 'function') {
+                    window.onKontoNotificationConfirmed('$safeTxId');
+                }
+            """.trimIndent()
+            webView.evaluateJavascript(jsCode, null)
+        }
+    }
+
+    /**
      * Inyecta la notificación en la aplicación React ejecutando window.onBankNotificationReceived()
      */
     fun dispatchNotification(title: String, text: String, packageName: String) {
         runOnUiThread {
             if (!isPageLoaded) {
-                // Si la página aún no cargó, guardarla en pendientes
                 val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                 val jsonString = prefs.getString(KEY_PENDING, "[]") ?: "[]"
                 val array = JSONArray(jsonString)
@@ -522,6 +651,25 @@ class MainActivity : AppCompatActivity() {
     private fun drenarNotificacionesPendientes() {
         try {
             val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+
+            // 1. Drenar confirmaciones pendientes
+            val confirmedJson = prefs.getString("confirmed_tx_ids", "[]") ?: "[]"
+            val confirmedArray = JSONArray(confirmedJson)
+            if (confirmedArray.length() > 0) {
+                val list = mutableListOf<String>()
+                for (i in 0 until confirmedArray.length()) {
+                    list.add("'" + escapeJsString(confirmedArray.getString(i)) + "'")
+                }
+                val jsConfirmed = """
+                    if (typeof window !== 'undefined' && typeof window.onKontoBatchConfirmTransactions === 'function') {
+                        window.onKontoBatchConfirmTransactions([${list.joinToString(",")}]);
+                    }
+                """.trimIndent()
+                webView.evaluateJavascript(jsConfirmed, null)
+                prefs.edit().putString("confirmed_tx_ids", "[]").apply()
+            }
+
+            // 2. Drenar notificaciones pendientes
             val jsonString = prefs.getString(KEY_PENDING, "[]") ?: "[]"
             val array = JSONArray(jsonString)
 
@@ -534,7 +682,17 @@ class MainActivity : AppCompatActivity() {
                 val title = item.optString("title", "")
                 val text = item.optString("text", "")
                 val pkg = item.optString("packageName", "")
-                dispatchNotification(title, text, pkg)
+                val txId = item.optString("txId", "")
+                val monto = item.optDouble("monto", 0.0)
+                val comercio = item.optString("comercio", "")
+                val catId = item.optString("categoriaId", "")
+                val catNombre = item.optString("nombreCategoria", "")
+
+                if (txId.isNotEmpty() && monto > 0) {
+                    dispatchTransactionDetails(title, text, pkg, txId, monto, comercio, catId, catNombre)
+                } else {
+                    dispatchNotification(title, text, pkg)
+                }
             }
 
             // Limpiar la cola tras procesarla
