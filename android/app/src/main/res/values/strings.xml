@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">Konto</string>
+    <string name="shortcut_new_expense_short">Nuevo Gasto</string>
+    <string name="shortcut_new_expense_long">Nuevo Gasto Rápido</string>
+</resources>

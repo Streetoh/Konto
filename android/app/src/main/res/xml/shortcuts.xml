@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:shortcutId="new_expense"
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_add"
+        android:shortcutShortLabel="@string/shortcut_new_expense_short"
+        android:shortcutLongLabel="@string/shortcut_new_expense_long">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="com.konto.app"
+            android:targetClass="com.konto.app.MainActivity"
+            android:data="https://appassets.androidplatform.net/assets/dist/index.html?action=new_expense">
+            <extra android:name="action" android:value="new_expense" />
+        </intent>
+        <categories android:name="android.shortcut.conversation" />
+    </shortcut>
+</shortcuts>
