@@ -184,6 +184,7 @@ export interface GastoDetectadoPayload {
   categoriaNombre: string;
   rawText: string;
   packageName?: string;
+  confirmado?: boolean;
 }
 
 declare global {

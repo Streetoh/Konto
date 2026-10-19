@@ -16,10 +16,10 @@ class BankNotificationListener : NotificationListenerService() {
         private const val TAG = "KontoBankListener"
         private const val PREFS_NAME = "konto_prefs"
         private const val KEY_PENDING = "pending_notifications"
-        private const val DEDUPLICATE_WINDOW_MS = 3000L
+        private const val DEDUPLICATE_WINDOW_MS = 10000L // 10 segundos para la misma compra
 
-        private var lastNotificationHash: String? = null
-        private var lastNotificationTime: Long = 0L
+        private var lastPurchaseKey: String? = null
+        private var lastPurchaseTime: Long = 0L
 
         fun requestRebindIfPossible(context: Context) {
             try {
@@ -49,13 +49,26 @@ class BankNotificationListener : NotificationListenerService() {
         super.onNotificationPosted(sbn)
         if (sbn == null) return
 
-        // 1. Ignorar notificaciones persistentes (ej. reproductor de música, descargas en curso)
+        // 0. CRÍTICO: NUNCA procesar notificaciones emitidas por nuestra propia aplicación Konto
+        val packageName = sbn.packageName?.trim() ?: ""
+        val myPackage = applicationContext.packageName ?: "com.konto.app"
+        if (packageName.equals(myPackage, ignoreCase = true) ||
+            packageName.equals("com.konto.app", ignoreCase = true)) {
+            return
+        }
+
+        // 1. Ignorar notificaciones persistentes (ej. reproductor de música, descargas) y apps del sistema
         if (sbn.isOngoing) {
+            return
+        }
+        if (packageName.equals("android", ignoreCase = true) ||
+            packageName.equals("com.android.systemui", ignoreCase = true) ||
+            packageName.equals("com.android.vending", ignoreCase = true) ||
+            packageName.equals("com.google.android.googlequicksearchbox", ignoreCase = true)) {
             return
         }
 
         val extras = sbn.notification?.extras ?: return
-        val packageName = sbn.packageName?.trim() ?: ""
 
         // Extraer todos los campos de texto posibles que usan las apps bancarias y wallets
         val title = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString()?.trim()
@@ -67,7 +80,6 @@ class BankNotificationListener : NotificationListenerService() {
         val subText = extras.getCharSequence(Notification.EXTRA_SUB_TEXT)?.toString()?.trim() ?: ""
         val infoText = extras.getCharSequence(Notification.EXTRA_INFO_TEXT)?.toString()?.trim() ?: ""
 
-        // Seleccionar el cuerpo de texto más informativo disponible
         val text = when {
             bigText.isNotEmpty() -> bigText
             normalText.isNotEmpty() -> normalText
@@ -78,7 +90,13 @@ class BankNotificationListener : NotificationListenerService() {
 
         val combinedContent = "$title $text $subText $infoText".trim()
 
-        // 2. Filtro inteligente para capturar Swedbank, Google Wallet y cualquier app bancaria o de pago
+        // 2. Extraer importe monetario: si no hay un importe numérico positivo, no es una compra
+        val monto = KontoNotificationManager.extraerMonto(combinedContent)
+        if (monto <= 0.0) {
+            return
+        }
+
+        // 3. Filtro inteligente para capturar Swedbank, Google Wallet y cualquier app bancaria o de pago
         val isKnownBankOrWallet = packageName.contains("swedbank", ignoreCase = true) ||
                 packageName.contains("wallet", ignoreCase = true) ||
                 packageName.contains("revolut", ignoreCase = true) ||
@@ -133,7 +151,6 @@ class BankNotificationListener : NotificationListenerService() {
                 combinedContent.contains("paid to", ignoreCase = true) ||
                 combinedContent.contains("received from", ignoreCase = true)
 
-        // Capturar si proviene de una app bancaria conocida, o si contiene moneda + palabra clave de transacción
         val isFinancialNotification = isKnownBankOrWallet ||
                 (hasCurrency && hasTransactionKeyword) ||
                 hasTransactionPatterns ||
@@ -143,29 +160,28 @@ class BankNotificationListener : NotificationListenerService() {
             return
         }
 
-        // 3. Mecanismo anti-duplicados (ventana de 3 segundos)
-        val currentHash = "$packageName|$title|$text"
+        val comercio = KontoNotificationManager.extraerComercio(combinedContent)
+
+        // 4. Mecanismo anti-duplicados estricto por compra (ventana de 10s para mismo banco, monto y comercio)
+        val purchaseKey = "$packageName|${"%.2f".format(java.util.Locale.US, monto)}|${comercio.uppercase()}"
         val currentTime = System.currentTimeMillis()
-        if (currentHash == lastNotificationHash && (currentTime - lastNotificationTime) < DEDUPLICATE_WINDOW_MS) {
-            Log.d(TAG, "Notificación duplicada ignorada (dentro de los 3s): $combinedContent")
+        if (purchaseKey == lastPurchaseKey && (currentTime - lastPurchaseTime) < DEDUPLICATE_WINDOW_MS) {
+            Log.d(TAG, "Notificación duplicada ignorada (misma compra en 10s): $purchaseKey")
             return
         }
-        lastNotificationHash = currentHash
-        lastNotificationTime = currentTime
+        lastPurchaseKey = purchaseKey
+        lastPurchaseTime = currentTime
 
-        Log.i(TAG, "Notificación bancaria interceptada con éxito: [$packageName] $combinedContent")
+        Log.i(TAG, "Notificación bancaria procesada: [$packageName] $comercio -> $monto €")
 
-        // 4. Extraer monto, comercio y categoria resuelta para la notificación interactiva de Konto
-        val monto = KontoNotificationManager.extraerMonto(combinedContent)
-        val comercio = KontoNotificationManager.extraerComercio(combinedContent)
         val (categoriaId, nombreCategoria) = KontoNotificationManager.resolverCategoria(this, combinedContent, comercio)
         val txId = "tx-noti-${System.currentTimeMillis()}-${(100..999).random()}"
 
-        // 5. Emitir SIEMPRE la notificación nativa interactiva de Konto en la barra de Android
+        // 5. Emitir EXACTAMENTE UNA notificación nativa interactiva de Konto en la barra de Android
         KontoNotificationManager.mostrarNotificacionGasto(
             context = this,
             txId = txId,
-            monto = if (monto > 0) monto else 0.0,
+            monto = monto,
             comercio = comercio,
             categoriaId = categoriaId,
             nombreCategoria = nombreCategoria
@@ -182,7 +198,8 @@ class BankNotificationListener : NotificationListenerService() {
                 monto = monto,
                 comercio = comercio,
                 categoriaId = categoriaId,
-                nombreCategoria = nombreCategoria
+                nombreCategoria = nombreCategoria,
+                confirmado = false
             )
         } else {
             // 7. Si la app está en segundo plano o cerrada, guardar en SharedPreferences con todos los detalles
@@ -223,14 +240,15 @@ class BankNotificationListener : NotificationListenerService() {
                 put("comercio", comercio)
                 put("categoriaId", categoriaId)
                 put("nombreCategoria", nombreCategoria)
+                put("confirmado", false)
                 put("timestamp", System.currentTimeMillis())
             }
 
             array.put(item)
             prefs.edit().putString(KEY_PENDING, array.toString()).apply()
-            Log.d(TAG, "Notificación guardada en cola offline de SharedPreferences. Total pendientes: ${array.length()}")
+            Log.d(TAG, "Notificación guardada en cola offline: $txId ($monto € en $comercio)")
         } catch (e: Exception) {
-            Log.e(TAG, "Error guardando notificación pendiente en SharedPreferences", e)
+            Log.e(TAG, "Error guardando notificación en SharedPreferences", e)
         }
     }
 }

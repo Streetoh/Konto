@@ -127,7 +127,9 @@ object KontoNotificationManager {
                         if (valObj is String) {
                             categoriaIdEncontrada = valObj
                         } else if (valObj is JSONObject) {
-                            categoriaIdEncontrada = valObj.optString("categoriaId", null)
+                            if (valObj.has("categoriaId")) {
+                                categoriaIdEncontrada = valObj.getString("categoriaId")
+                            }
                         }
                     }
                 }
@@ -185,7 +187,7 @@ object KontoNotificationManager {
         crearCanalNotificaciones(context)
 
         val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager ?: return
-        val notifId = (System.currentTimeMillis() % 100000).toInt()
+        val notifId = 8800 + (Math.abs(comercio.hashCode()) % 1000)
 
         val montoFormateado = if (monto % 1.0 == 0.0) {
             String.format(java.util.Locale.US, "%.0f €", monto)
@@ -248,6 +250,7 @@ object KontoNotificationManager {
             .setStyle(NotificationCompat.BigTextStyle().bigText(textoExpandido))
             .setContentIntent(tapPendingIntent)
             .setAutoCancel(true)
+            .setOnlyAlertOnce(true)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .addAction(0, "✓ Aceptar", acceptPendingIntent)
             .addAction(0, "✎ Modificar", modifyPendingIntent)

@@ -535,7 +535,8 @@ class MainActivity : AppCompatActivity() {
         monto: Double,
         comercio: String,
         categoriaId: String,
-        nombreCategoria: String
+        nombreCategoria: String,
+        confirmado: Boolean = false
     ) {
         runOnUiThread {
             if (!isPageLoaded) {
@@ -551,6 +552,7 @@ class MainActivity : AppCompatActivity() {
                     put("comercio", comercio)
                     put("categoriaId", categoriaId)
                     put("nombreCategoria", nombreCategoria)
+                    put("confirmado", confirmado)
                     put("timestamp", System.currentTimeMillis())
                 }
                 array.put(item)
@@ -576,7 +578,8 @@ class MainActivity : AppCompatActivity() {
                             categoriaId: '$safeCatId',
                             categoriaNombre: '$safeCatNombre',
                             rawText: '$safeTitle. $safeText',
-                            packageName: '$safePkg'
+                            packageName: '$safePkg',
+                            confirmado: $confirmado
                         });
                     } else if (typeof window.onBankNotificationReceived === 'function') {
                         window.onBankNotificationReceived('$safeTitle', '$safeText', '$safePkg');
@@ -687,9 +690,10 @@ class MainActivity : AppCompatActivity() {
                 val comercio = item.optString("comercio", "")
                 val catId = item.optString("categoriaId", "")
                 val catNombre = item.optString("nombreCategoria", "")
+                val confirmado = item.optBoolean("confirmado", false)
 
                 if (txId.isNotEmpty() && monto > 0) {
-                    dispatchTransactionDetails(title, text, pkg, txId, monto, comercio, catId, catNombre)
+                    dispatchTransactionDetails(title, text, pkg, txId, monto, comercio, catId, catNombre, confirmado)
                 } else {
                     dispatchNotification(title, text, pkg)
                 }

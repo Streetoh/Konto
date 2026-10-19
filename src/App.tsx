@@ -106,6 +106,8 @@ export function App() {
   // Referencias mutables para el Android Bridge Hook
   const diccionarioRef = useRef(diccionario);
   const categoriasRef = useRef(categorias);
+  const pendingModifyTxIdRef = useRef<string | null>(null);
+  const ultimosGastosDetectadosRef = useRef<Map<string, number>>(new Map());
 
   useEffect(() => {
     diccionarioRef.current = diccionario;
@@ -448,20 +450,36 @@ export function App() {
 
     // Gasto detectado enriquecido desde Android
     window.onKontoExpenseDetected = (data: GastoDetectadoPayload) => {
+      // Evitar duplicados rápidos en React dentro de 10s
+      const key = `${data.importe.toFixed(2)}_${data.comercio.toUpperCase()}`;
+      const ahora = Date.now();
+      const previo = ultimosGastosDetectadosRef.current.get(key) || 0;
+      if (ahora - previo < 10000) {
+        return;
+      }
+      ultimosGastosDetectadosRef.current.set(key, ahora);
+
+      const nuevaTx: TransaccionVariable = {
+        id: data.id,
+        fecha: new Date().toISOString(),
+        importe: data.importe,
+        tipo: 'gasto',
+        comercio: data.comercio,
+        categoriaId: data.categoriaId,
+        confirmado: Boolean(data.confirmado),
+        origenNotificacion: true,
+      };
+
       setTransacciones((prev) => {
         if (prev.some((t) => t.id === data.id)) return prev;
-        const nuevaTx: TransaccionVariable = {
-          id: data.id,
-          fecha: new Date().toISOString(),
-          importe: data.importe,
-          tipo: 'gasto',
-          comercio: data.comercio,
-          categoriaId: data.categoriaId,
-          confirmado: false,
-          origenNotificacion: true,
-        };
         return [nuevaTx, ...prev];
       });
+
+      // Si el usuario pulsó "Modificar" y el modal estaba pendiente de esta tx
+      if (pendingModifyTxIdRef.current === data.id) {
+        setTxParaModificarCategoria(nuevaTx);
+        pendingModifyTxIdRef.current = null;
+      }
 
       setToastNotificacion({
         id: data.id,
@@ -483,10 +501,12 @@ export function App() {
 
     // Abrir modal de modificar categoría desde acción ("✎ Modificar")
     window.onKontoOpenModifyCategory = (txId: string) => {
+      pendingModifyTxIdRef.current = txId;
       setTransacciones((prev) => {
         const encontrada = prev.find((t) => t.id === txId);
         if (encontrada) {
           setTxParaModificarCategoria(encontrada);
+          pendingModifyTxIdRef.current = null;
         }
         return prev;
       });

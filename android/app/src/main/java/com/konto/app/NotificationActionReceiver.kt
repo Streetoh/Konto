@@ -13,6 +13,7 @@ class NotificationActionReceiver : BroadcastReceiver() {
     companion object {
         private const val TAG = "KontoNotifAction"
         private const val PREFS_NAME = "konto_prefs"
+        private const val KEY_PENDING = "pending_notifications"
     }
 
     override fun onReceive(context: Context, intent: Intent) {
@@ -54,7 +55,20 @@ class NotificationActionReceiver : BroadcastReceiver() {
             val jsonString = prefs.getString("confirmed_tx_ids", "[]") ?: "[]"
             val array = JSONArray(jsonString)
             array.put(txId)
-            prefs.edit().putString("confirmed_tx_ids", array.toString()).apply()
+
+            val pendingJson = prefs.getString(KEY_PENDING, "[]") ?: "[]"
+            val pendingArray = JSONArray(pendingJson)
+            for (i in 0 until pendingArray.length()) {
+                val item = pendingArray.getJSONObject(i)
+                if (item.optString("txId") == txId) {
+                    item.put("confirmado", true)
+                }
+            }
+
+            prefs.edit()
+                .putString("confirmed_tx_ids", array.toString())
+                .putString(KEY_PENDING, pendingArray.toString())
+                .apply()
             Log.d(TAG, "Transacción $txId marcada como confirmada offline")
         } catch (e: Exception) {
             Log.e(TAG, "Error guardando confirmación offline", e)
