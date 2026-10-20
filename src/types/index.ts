@@ -135,11 +135,15 @@ export interface MovimientoHucha {
   importe: number;
   concepto: string;
   ciclo?: string; // Formato "YYYY-MM" (ej. "2026-10")
+  fechaDiaReferencia?: string; // "YYYY-MM-DD" del día cuyo sobrante se guardó
+  esAutomatico?: boolean; // Marca si fue generado por el rollover automático nocturno
 }
 
 export interface EstadoHucha {
   saldo: number;
   historial: MovimientoHucha[];
+  diasRolloverEjecutados?: string[]; // Fechas "YYYY-MM-DD" ya evaluadas al cierre del día
+  autoRolloverHabilitado?: boolean; // Activar/desactivar guardado automático nocturno
 }
 
 export interface ComercioResumen {
@@ -202,6 +206,7 @@ declare global {
     onOcrResult?: (data: OcrResultPayload) => void;
     onOcrError?: (error: string) => void;
     onKontoShortcutTriggered?: (action: string) => void;
+    onKontoCheckRollover?: () => void;
     AndroidBridge?: {
       openNotificationSettings?: () => void;
       isNotificationAccessGranted?: () => boolean;
@@ -214,6 +219,7 @@ declare global {
       openAppInfoSettings?: () => void;
       vibrate?: (ms: number) => void;
       syncCategoriesAndDictionary?: (categoriesJson: string, dictionaryJson: string) => void;
+      showRolloverNotification?: (importe: number, diasTexto: string) => void;
     };
   }
 }

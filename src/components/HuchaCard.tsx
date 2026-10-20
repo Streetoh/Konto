@@ -10,6 +10,7 @@ import {
   History,
   X,
   CheckCircle2,
+  Moon,
 } from 'lucide-react';
 
 interface Props {
@@ -20,6 +21,7 @@ interface Props {
   gastadoHoy: number;
   onGuardarSobrante: (importe: number) => void;
   onRetirarHucha: (importe: number, concepto: string) => void;
+  onToggleAutoRollover?: (habilitado: boolean) => void;
 }
 
 export const HuchaCard: React.FC<Props> = ({
@@ -30,6 +32,7 @@ export const HuchaCard: React.FC<Props> = ({
   gastadoHoy,
   onGuardarSobrante,
   onRetirarHucha,
+  onToggleAutoRollover,
 }) => {
   const [modalRetirarAbierto, setModalRetirarAbierto] = useState(false);
   const [importeRetirar, setImporteRetirar] = useState('');
@@ -93,6 +96,30 @@ export const HuchaCard: React.FC<Props> = ({
               <span className="px-1.5 py-0.2 rounded-full bg-amber-500/10 text-amber-400 text-[10px] font-mono border border-amber-500/20">
                 Rollover
               </span>
+              {onToggleAutoRollover ? (
+                <button
+                  type="button"
+                  onClick={() => onToggleAutoRollover(!(hucha.autoRolloverHabilitado ?? true))}
+                  className={`px-1.5 py-0.2 rounded-full text-[9px] font-mono border flex items-center gap-0.5 cursor-pointer transition ${
+                    (hucha.autoRolloverHabilitado ?? true)
+                      ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20 hover:bg-emerald-500/20'
+                      : 'bg-zinc-800 text-zinc-400 border-zinc-700 hover:bg-zinc-750'
+                  }`}
+                  title={
+                    (hucha.autoRolloverHabilitado ?? true)
+                      ? 'Rollover automático activo a medianoche (Pulsar para pausar)'
+                      : 'Rollover automático pausado (Pulsar para activar)'
+                  }
+                >
+                  <Moon size={9} />
+                  <span>{(hucha.autoRolloverHabilitado ?? true) ? 'Auto 00:00' : 'Pausado'}</span>
+                </button>
+              ) : (
+                <span className="px-1.5 py-0.2 rounded-full bg-emerald-500/10 text-emerald-400 text-[9px] font-mono border border-emerald-500/20 flex items-center gap-0.5">
+                  <Moon size={9} />
+                  <span>Auto 00:00</span>
+                </span>
+              )}
             </div>
             <p className="text-[10px] text-zinc-500 font-medium">Ahorro activo y gamificado</p>
           </div>
@@ -143,6 +170,17 @@ export const HuchaCard: React.FC<Props> = ({
               : 'gastando bajo límite'}
           </span>
         </div>
+      </div>
+
+      {/* Nota Informativa de Auto-Rollover */}
+      <div className="my-2 p-2 rounded-xl bg-zinc-950/70 border border-zinc-800/80 flex items-center justify-between text-[10px]">
+        <div className="flex items-center gap-1.5 text-zinc-300">
+          <Moon size={12} className="text-amber-400 shrink-0" />
+          <span>Auto-guardado al finalizar el día:</span>
+        </div>
+        <span className="font-mono font-bold text-amber-300">
+          {puedeGuardarSobrante ? `+${formatearMoneda(sobranteDisponibleHoy)} hoy` : '0,00 €'}
+        </span>
       </div>
 
       {/* Mensaje de Éxito Temporal */}
@@ -224,6 +262,11 @@ export const HuchaCard: React.FC<Props> = ({
                   <ArrowDownLeft size={12} className="text-emerald-400 shrink-0" />
                 )}
                 <span className="text-zinc-300 truncate">{mov.concepto}</span>
+                {mov.esAutomatico && (
+                  <span className="px-1 py-0.2 rounded text-[8px] bg-amber-500/15 text-amber-400 border border-amber-500/25 shrink-0">
+                    Auto
+                  </span>
+                )}
                 <span className="text-[10px] text-zinc-500 font-mono">
                   {formatearFechaMovimiento(mov.fecha)}
                 </span>

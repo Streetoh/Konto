@@ -258,4 +258,43 @@ object KontoNotificationManager {
         notificationManager.notify(notifId, builder.build())
         Log.i(TAG, "Notificación interactiva de Konto emitida con éxito: $titulo")
     }
+
+    fun mostrarNotificacionRolloverHucha(context: Context, importe: Double, diasTexto: String) {
+        crearCanalNotificaciones(context)
+        val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager ?: return
+        val notifId = 8990
+        val importeFormateado = if (importe % 1.0 == 0.0) {
+            String.format(java.util.Locale.US, "%.0f €", importe)
+        } else {
+            String.format(java.util.Locale.US, "%.2f €", importe)
+        }
+
+        val titulo = "🌙 Sobrante guardado en la Hucha ($importeFormateado)"
+        val textoCorto = "Se ha transferido a tu Hucha Konto el disponible no gastado."
+        val textoExpandido = "¡Objetivo cumplido! Al finalizar el día no gastaste todo tu presupuesto diario y se han blindado $importeFormateado automáticamente en tu Hucha Konto."
+
+        val tapIntent = Intent(context, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        }
+        val tapPendingIntent = PendingIntent.getActivity(
+            context,
+            notifId,
+            tapIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val builder = NotificationCompat.Builder(context, CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_shortcut_add)
+            .setColor(0xFFF59E0B.toInt()) // Amber 500
+            .setContentTitle(titulo)
+            .setContentText(textoCorto)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(textoExpandido))
+            .setContentIntent(tapPendingIntent)
+            .setAutoCancel(true)
+            .setOnlyAlertOnce(true)
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+
+        notificationManager.notify(notifId, builder.build())
+        Log.i(TAG, "Notificación de rollover hucha emitida con éxito: $titulo ($diasTexto)")
+    }
 }

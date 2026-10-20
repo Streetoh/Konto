@@ -343,6 +343,8 @@ export const saveNotificacionesCrudas = (items: NotificacionCruda[]): void => {
 export const DEFAULT_HUCHA: EstadoHucha = {
   saldo: 0,
   historial: [],
+  diasRolloverEjecutados: [],
+  autoRolloverHabilitado: true,
 };
 
 export const loadHucha = (): EstadoHucha => {
@@ -353,6 +355,13 @@ export const loadHucha = (): EstadoHucha => {
     return {
       saldo: Number(parsed.saldo) || 0,
       historial: Array.isArray(parsed.historial) ? parsed.historial : [],
+      diasRolloverEjecutados: Array.isArray(parsed.diasRolloverEjecutados)
+        ? parsed.diasRolloverEjecutados
+        : [],
+      autoRolloverHabilitado:
+        typeof parsed.autoRolloverHabilitado === 'boolean'
+          ? parsed.autoRolloverHabilitado
+          : true,
     };
   } catch {
     return DEFAULT_HUCHA;

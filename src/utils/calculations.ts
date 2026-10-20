@@ -1,9 +1,11 @@
 import type {
+  ConfiguracionMensual,
   GastoFijo,
   TransaccionVariable,
   CategoriaVariable,
   CicloFechas,
   EstadoHucha,
+  MovimientoHucha,
 } from '../types';
 
 export interface ResumenFinanciero {
@@ -474,4 +476,231 @@ export const formatearMesLegible = (mesAnoStr: string): string => {
   const date = new Date(parseInt(year, 10), parseInt(month, 10) - 1, 1);
   const nombreMes = date.toLocaleDateString('es-ES', { month: 'long' });
   return `${nombreMes.charAt(0).toUpperCase() + nombreMes.slice(1)} ${year}`;
+};
+
+export const toLocalDateString = (d: Date): string => {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+};
+
+export interface ResultadoRollover {
+  huboCambios: boolean;
+  totalAportado: number;
+  diasProcesados: string[];
+  nuevoEstadoHucha: EstadoHucha;
+  nuevaRacha: number;
+  mensajeToast?: string;
+}
+
+/**
+ * Ejecuta el barrido y guardado automático nocturno del disponible diario no utilizado.
+ * Transfiere los sobrantes de días finalizados directamente a la Hucha Konto.
+ */
+export const ejecutarRolloverDiarioAutomatico = (
+  config: ConfiguracionMensual,
+  gastosFijos: GastoFijo[],
+  transacciones: TransaccionVariable[],
+  hucha: EstadoHucha,
+  rachaActual: number,
+  fechaReferencia: Date = new Date()
+): ResultadoRollover => {
+  if (hucha.autoRolloverHabilitado === false) {
+    return {
+      huboCambios: false,
+      totalAportado: 0,
+      diasProcesados: [],
+      nuevoEstadoHucha: hucha,
+      nuevaRacha: rachaActual,
+    };
+  }
+
+  const ciclo = calcularFechasCiclo(config.mesActual, config.diaInicioCiclo || 10);
+  const ahora = fechaReferencia;
+  const inicioHoy = new Date(ahora.getFullYear(), ahora.getMonth(), ahora.getDate(), 0, 0, 0, 0);
+
+  const diasEjecutados = new Set<string>(hucha.diasRolloverEjecutados || []);
+
+  // Incorporar días que ya tengan movimiento de Hucha asociado
+  (hucha.historial || []).forEach((m) => {
+    if (m.fechaDiaReferencia) {
+      diasEjecutados.add(m.fechaDiaReferencia);
+    }
+  });
+
+  const unDiaMs = 24 * 60 * 60 * 1000;
+  const fechaCursor = new Date(ciclo.fechaInicio);
+  fechaCursor.setHours(0, 0, 0, 0);
+
+  const nuevosMovimientos: MovimientoHucha[] = [];
+  let totalAportado = 0;
+  const diasProcesados: string[] = [];
+  let rachaCalculada = rachaActual;
+
+  const impactoGastosFijos = gastosFijos.reduce(
+    (acc, g) => acc + calcularImpactoMensualGastoFijo(g),
+    0
+  );
+
+  let historialTemporal = [...(hucha.historial || [])];
+
+  const esPrimeraVez = !hucha.diasRolloverEjecutados || hucha.diasRolloverEjecutados.length === 0;
+  const fechaAyer = new Date(inicioHoy.getTime() - unDiaMs);
+  const ymdAyer = toLocalDateString(fechaAyer);
+
+  // Recorrer los días del ciclo finalizados estrictamente antes de hoy
+  while (fechaCursor.getTime() < inicioHoy.getTime()) {
+    const ymd = toLocalDateString(fechaCursor);
+    const inicioDia = new Date(fechaCursor.getFullYear(), fechaCursor.getMonth(), fechaCursor.getDate(), 0, 0, 0, 0);
+    const finDia = new Date(fechaCursor.getFullYear(), fechaCursor.getMonth(), fechaCursor.getDate(), 23, 59, 59, 999);
+
+    if (diasEjecutados.has(ymd)) {
+      fechaCursor.setDate(fechaCursor.getDate() + 1);
+      continue;
+    }
+
+    const tieneTransacciones = transacciones.some((tx) => {
+      if (!tx.fecha) return false;
+      const t = new Date(tx.fecha).getTime();
+      return t >= inicioDia.getTime() && t <= finDia.getTime();
+    });
+
+    // Si es primera ejecución, no barremos días antiguos sin transacciones
+    if (esPrimeraVez && ymd !== ymdAyer && !tieneTransacciones) {
+      diasEjecutados.add(ymd);
+      fechaCursor.setDate(fechaCursor.getDate() + 1);
+      continue;
+    }
+
+    const finCicloTimestamp = ciclo.fechaFin.getTime();
+    const diasRestantesEnEseDia = Math.max(
+      1,
+      Math.round((finCicloTimestamp - inicioDia.getTime()) / unDiaMs) + 1
+    );
+
+    const ingresosExtraHastaEseDia = transacciones
+      .filter((tx) => {
+        if (tx.tipo !== 'ingreso' || !tx.fecha) return false;
+        const t = new Date(tx.fecha).getTime();
+        return t >= ciclo.fechaInicio.getTime() && t <= finDia.getTime();
+      })
+      .reduce((acc, tx) => acc + (Number(tx.importe) || 0), 0);
+
+    const gastadoAntesDeEseDia = transacciones
+      .filter((tx) => {
+        if (tx.tipo !== 'gasto' || !tx.fecha) return false;
+        const t = new Date(tx.fecha).getTime();
+        return t >= ciclo.fechaInicio.getTime() && t < inicioDia.getTime();
+      })
+      .reduce((acc, tx) => acc + (Number(tx.importe) || 0), 0);
+
+    const aportadoHuchaAntes = historialTemporal
+      .filter((m) => {
+        if (!m.fecha) return false;
+        const t = new Date(m.fecha).getTime();
+        return t >= ciclo.fechaInicio.getTime() && t < inicioDia.getTime() && m.tipo === 'ingreso';
+      })
+      .reduce((acc, m) => acc + (Number(m.importe) || 0), 0);
+
+    const retiradoHuchaAntes = historialTemporal
+      .filter((m) => {
+        if (!m.fecha) return false;
+        const t = new Date(m.fecha).getTime();
+        return t >= ciclo.fechaInicio.getTime() && t < inicioDia.getTime() && m.tipo === 'retirada';
+      })
+      .reduce((acc, m) => acc + (Number(m.importe) || 0), 0);
+
+    const netoHuchaAntesDeEseDia = Math.max(0, aportadoHuchaAntes - retiradoHuchaAntes);
+
+    const presupuestoAlInicio =
+      config.ingresosMensuales +
+      ingresosExtraHastaEseDia -
+      impactoGastosFijos -
+      config.objetivoAhorro -
+      netoHuchaAntesDeEseDia -
+      gastadoAntesDeEseDia;
+
+    const asignacionDiariaEseDia = Math.max(0, presupuestoAlInicio / diasRestantesEnEseDia);
+
+    const gastadoEnEseDia = transacciones
+      .filter((tx) => {
+        if (tx.tipo !== 'gasto' || !tx.fecha) return false;
+        const t = new Date(tx.fecha).getTime();
+        return t >= inicioDia.getTime() && t <= finDia.getTime();
+      })
+      .reduce((acc, tx) => acc + (Number(tx.importe) || 0), 0);
+
+    const manualHuchaEseDia = historialTemporal
+      .filter((m) => {
+        if (!m.fecha || m.tipo !== 'ingreso') return false;
+        const t = new Date(m.fecha).getTime();
+        return t >= inicioDia.getTime() && t <= finDia.getTime();
+      })
+      .reduce((acc, m) => acc + (Number(m.importe) || 0), 0);
+
+    const sobrante = Math.max(
+      0,
+      Math.round((asignacionDiariaEseDia - gastadoEnEseDia - manualHuchaEseDia) * 100) / 100
+    );
+
+    if (sobrante > 0) {
+      const meses = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
+      const etiquetaDia = `${inicioDia.getDate()} ${meses[inicioDia.getMonth()]}`;
+      const nuevoMov: MovimientoHucha = {
+        id: `mov-auto-${ymd}-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+        fecha: finDia.toISOString(),
+        tipo: 'ingreso',
+        importe: sobrante,
+        concepto: `Sobrante automático del día (${etiquetaDia})`,
+        ciclo: config.mesActual,
+        fechaDiaReferencia: ymd,
+        esAutomatico: true,
+      };
+
+      nuevosMovimientos.unshift(nuevoMov);
+      historialTemporal.unshift(nuevoMov);
+      totalAportado += sobrante;
+      diasProcesados.push(ymd);
+
+      if (gastadoEnEseDia <= asignacionDiariaEseDia * 1.05) {
+        rachaCalculada++;
+      }
+    }
+
+    diasEjecutados.add(ymd);
+    fechaCursor.setDate(fechaCursor.getDate() + 1);
+  }
+
+  if (nuevosMovimientos.length === 0 && diasEjecutados.size === (hucha.diasRolloverEjecutados?.length || 0)) {
+    return {
+      huboCambios: false,
+      totalAportado: 0,
+      diasProcesados: [],
+      nuevoEstadoHucha: hucha,
+      nuevaRacha: rachaActual,
+    };
+  }
+
+  const saldoFinal = Math.round((hucha.saldo + totalAportado) * 100) / 100;
+  const nuevoEstadoHucha: EstadoHucha = {
+    saldo: saldoFinal,
+    historial: [...nuevosMovimientos, ...(hucha.historial || [])],
+    diasRolloverEjecutados: Array.from(diasEjecutados),
+    autoRolloverHabilitado: hucha.autoRolloverHabilitado ?? true,
+  };
+
+  const mensajeToast =
+    totalAportado > 0
+      ? `🌙 Fin del día: ¡Se han guardado ${totalAportado.toFixed(2)}€ de sobrante en tu Hucha Konto! 🎉`
+      : undefined;
+
+  return {
+    huboCambios: true,
+    totalAportado: Math.round(totalAportado * 100) / 100,
+    diasProcesados,
+    nuevoEstadoHucha,
+    nuevaRacha: rachaCalculada,
+    mensajeToast,
+  };
 };

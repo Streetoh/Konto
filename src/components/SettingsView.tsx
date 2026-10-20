@@ -35,6 +35,8 @@ import {
   CalendarCheck2,
   BatteryCharging,
   Info,
+  PiggyBank,
+  Moon,
 } from 'lucide-react';
 import type { NotificacionCruda } from '../types';
 
@@ -69,6 +71,8 @@ interface Props {
   }) => void;
   onResetearTodo: () => void;
   onVolverAInicio: () => void;
+  onToggleAutoRollover?: (habilitado: boolean) => void;
+  onEjecutarRolloverManual?: () => void;
 }
 
 export const SettingsView: React.FC<Props> = ({
@@ -93,6 +97,8 @@ export const SettingsView: React.FC<Props> = ({
   onImportarBackupCompleto,
   onResetearTodo,
   onVolverAInicio,
+  onToggleAutoRollover,
+  onEjecutarRolloverManual,
 }) => {
   const [modalCategoriaAbierto, setModalCategoriaAbierto] = useState(false);
   const [categoriaAEditar, setCategoriaAEditar] = useState<CategoriaVariable | null>(null);
@@ -536,6 +542,68 @@ export const SettingsView: React.FC<Props> = ({
               <span>Cerrar ciclo actual / Resumen del Día 9 (Previsualizar)</span>
             </button>
           </div>
+        )}
+      </div>
+
+      {/* SECCIÓN HUCHA KONTO & ROLLOVER GAMIFICADO */}
+      <div className="bg-zinc-900/60 rounded-3xl p-4 border border-amber-500/30 space-y-3 shadow-md">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <div className="w-7 h-7 rounded-xl bg-amber-500/10 text-amber-400 flex items-center justify-center border border-amber-500/20">
+              <PiggyBank size={14} />
+            </div>
+            <div>
+              <h3 className="text-xs font-bold text-zinc-100">Hucha Konto &amp; Rollover Automático</h3>
+              <p className="text-[10px] text-zinc-400">Ahorro nocturno de sobrantes diarios</p>
+            </div>
+          </div>
+
+          <span className="text-[9px] font-mono font-bold px-2 py-0.5 rounded-full border border-amber-500/30 bg-amber-500/10 text-amber-300">
+            {formatearMoneda(hucha?.saldo || 0)}
+          </span>
+        </div>
+
+        {/* Switch de Auto-Rollover */}
+        <div className="p-3 bg-zinc-950/80 border border-zinc-800 rounded-2xl flex items-center justify-between gap-3">
+          <div className="space-y-0.5">
+            <div className="text-xs font-bold text-zinc-200 flex items-center gap-1.5">
+              <Moon size={13} className="text-amber-400" />
+              <span>Guardar sobrante automáticamente a las 00:00</span>
+            </div>
+            <p className="text-[10px] text-zinc-400 leading-tight">
+              Transfiere cada noche a la Hucha el disponible que no hayas gastado durante el día.
+            </p>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => {
+              if (onToggleAutoRollover) {
+                onToggleAutoRollover(!(hucha?.autoRolloverHabilitado ?? true));
+              }
+            }}
+            className={`w-11 h-6 rounded-full transition-colors relative cursor-pointer shrink-0 ${
+              (hucha?.autoRolloverHabilitado ?? true) ? 'bg-amber-500' : 'bg-zinc-800'
+            }`}
+          >
+            <div
+              className={`w-4 h-4 rounded-full bg-white transition-transform absolute top-1 ${
+                (hucha?.autoRolloverHabilitado ?? true) ? 'left-6' : 'left-1'
+              }`}
+            />
+          </button>
+        </div>
+
+        {/* Botón para forzar comprobación manual ahora */}
+        {onEjecutarRolloverManual && (
+          <button
+            type="button"
+            onClick={onEjecutarRolloverManual}
+            className="w-full py-2 px-3 rounded-xl bg-zinc-950 hover:bg-zinc-850 text-amber-300 border border-amber-500/20 text-xs font-medium flex items-center justify-center gap-1.5 transition active:scale-98 cursor-pointer"
+          >
+            <Sparkles size={13} className="text-amber-400" />
+            <span>Comprobar y guardar sobrantes de días anteriores ahora</span>
+          </button>
         )}
       </div>
 

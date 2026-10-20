@@ -275,6 +275,17 @@ class MainActivity : AppCompatActivity() {
                 Log.e(TAG, "Error al emitir vibración", e)
             }
         }
+
+        @JavascriptInterface
+        fun showRolloverNotification(importe: Double, diasTexto: String) {
+            runOnUiThread {
+                KontoNotificationManager.mostrarNotificacionRolloverHucha(
+                    this@MainActivity,
+                    importe,
+                    diasTexto
+                )
+            }
+        }
     }
 
     fun checkNotificationPermission(): Boolean {
@@ -504,6 +515,10 @@ class MainActivity : AppCompatActivity() {
         if (isPageLoaded) {
             drenarNotificacionesPendientes()
             notificarEstadoPermisoAReact()
+            webView.evaluateJavascript(
+                "if (typeof window !== 'undefined' && typeof window.onKontoCheckRollover === 'function') { window.onKontoCheckRollover(); }",
+                null
+            )
         }
     }
 

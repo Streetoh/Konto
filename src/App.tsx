@@ -42,6 +42,7 @@ import {
   calcularResumenFinanciero,
   obtenerCicloActivoHoy,
   calcularRachaDiasVerdes,
+  ejecutarRolloverDiarioAutomatico,
 } from './utils/calculations';
 import { procesarTextoNotificacion, extraerPalabraClaveParaAprender } from './utils/notificationParser';
 import { Header } from './components/Header';
@@ -316,6 +317,91 @@ export function App() {
     });
   }, []);
 
+  // 3.1 MOTOR DE ROLLOVER AUTOMÁTICO AL FINALIZAR EL DÍA (HUCHA KONTO)
+  const ejecutarVerificacionRollover = useCallback(
+    (notificar = true) => {
+      setHucha((prevHucha) => {
+        const res = ejecutarRolloverDiarioAutomatico(
+          config,
+          gastosFijos,
+          transacciones,
+          prevHucha,
+          rachaDiasVerdes
+        );
+
+        if (res.huboCambios) {
+          if (res.totalAportado > 0) {
+            setRachaDiasVerdes(res.nuevaRacha);
+            if (notificar) {
+              setToastNotificacion({
+                id: `toast-rollover-${Date.now()}`,
+                comercio: 'Hucha Konto (Fin del día)',
+                importe: res.totalAportado,
+                tipo: 'ingreso',
+                categoriaNombre: 'Rollover automático nocturno',
+                categoriaSugerida: false,
+              });
+              vibrate(25);
+              if (
+                typeof window !== 'undefined' &&
+                window.AndroidBridge &&
+                typeof window.AndroidBridge.showRolloverNotification === 'function'
+              ) {
+                window.AndroidBridge.showRolloverNotification(
+                  res.totalAportado,
+                  res.diasProcesados.join(', ')
+                );
+              }
+            }
+          }
+          return res.nuevoEstadoHucha;
+        }
+        return prevHucha;
+      });
+    },
+    [config, gastosFijos, transacciones, rachaDiasVerdes]
+  );
+
+  const handleToggleAutoRollover = (habilitado: boolean) => {
+    setHucha((prev) => ({
+      ...prev,
+      autoRolloverHabilitado: habilitado,
+    }));
+  };
+
+  const handleEjecutarRolloverManual = () => {
+    const res = ejecutarRolloverDiarioAutomatico(
+      config,
+      gastosFijos,
+      transacciones,
+      hucha,
+      rachaDiasVerdes
+    );
+
+    if (res.huboCambios && res.totalAportado > 0) {
+      setHucha(res.nuevoEstadoHucha);
+      setRachaDiasVerdes(res.nuevaRacha);
+      setToastNotificacion({
+        id: `toast-rollover-manual-${Date.now()}`,
+        comercio: 'Hucha Konto',
+        importe: res.totalAportado,
+        tipo: 'ingreso',
+        categoriaNombre: 'Rollover completado',
+        categoriaSugerida: false,
+      });
+      vibrate(25);
+    } else {
+      setToastNotificacion({
+        id: `toast-rollover-aldia-${Date.now()}`,
+        comercio: 'Hucha Konto al día',
+        importe: 0,
+        tipo: 'ingreso',
+        categoriaNombre: 'No hay sobrantes pendientes de días anteriores',
+        categoriaSugerida: false,
+      });
+    }
+  };
+
   // 1. RECEPTOR POR URL PARAMETERS Y ATAJOS DE ANDROID (App Shortcuts & Notificaciones)
   useEffect(() => {
     try {
@@ -521,14 +607,71 @@ export function App() {
       );
     };
 
+    // Verificación de rollover invocada desde Android onResume
+    window.onKontoCheckRollover = () => {
+      ejecutarVerificacionRollover(true);
+    };
+
     return () => {
       delete window.onBankNotificationReceived;
       delete window.onKontoExpenseDetected;
       delete window.onKontoNotificationConfirmed;
       delete window.onKontoOpenModifyCategory;
       delete window.onKontoBatchConfirmTransactions;
+      delete window.onKontoCheckRollover;
     };
-  }, [handleSimularTextoNotificacion]);
+  }, [handleSimularTextoNotificacion, ejecutarVerificacionRollover]);
+
+  // 4.1 EJECUCIÓN DEL ROLLOVER AUTOMÁTICO EN ARRANQUE
+  useEffect(() => {
+    ejecutarVerificacionRollover(true);
+  }, [ejecutarVerificacionRollover]);
+
+  // 4.2 PLANIFICADOR EXACTO DE CIERRE DE DÍA A MEDIANOCHE (00:00:02)
+  useEffect(() => {
+    let timerId: ReturnType<typeof setTimeout> | undefined;
+
+    const programarProximoCierreMedianoche = () => {
+      const ahora = new Date();
+      const manana = new Date(
+        ahora.getFullYear(),
+        ahora.getMonth(),
+        ahora.getDate() + 1,
+        0,
+        0,
+        2
+      );
+      const msHastaMedianoche = Math.max(1000, manana.getTime() - ahora.getTime());
+
+      timerId = setTimeout(() => {
+        ejecutarVerificacionRollover(true);
+        programarProximoCierreMedianoche();
+      }, msHastaMedianoche);
+    };
+
+    programarProximoCierreMedianoche();
+
+    return () => {
+      if (timerId) clearTimeout(timerId);
+    };
+  }, [ejecutarVerificacionRollover]);
+
+  // 4.3 DETECTOR DE CAMBIO DE DÍA AL VOLVER A LA APP (REACTIVACIÓN / FOCO)
+  useEffect(() => {
+    const handleReactivacion = () => {
+      if (document.visibilityState === 'visible') {
+        ejecutarVerificacionRollover(true);
+      }
+    };
+
+    window.addEventListener('visibilitychange', handleReactivacion);
+    window.addEventListener('focus', handleReactivacion);
+
+    return () => {
+      window.removeEventListener('visibilitychange', handleReactivacion);
+      window.removeEventListener('focus', handleReactivacion);
+    };
+  }, [ejecutarVerificacionRollover]);
 
   const handleGuardarReglaDiccionario = (
     palabraClave: string,
@@ -828,6 +971,7 @@ export function App() {
                 gastadoHoy={resumen.gastadoHoy}
                 onGuardarSobrante={handleGuardarSobranteHucha}
                 onRetirarHucha={handleRetirarHucha}
+                onToggleAutoRollover={handleToggleAutoRollover}
               />
 
               {/* CIERRE Y RESUMEN DEL DÍA 9 (HISTORIAL DE CICLOS) */}
@@ -965,6 +1109,8 @@ export function App() {
               onImportarBackupCompleto={handleImportarBackupCompleto}
               onResetearTodo={handleResetearValores}
               onVolverAInicio={() => setTabActiva('inicio')}
+              onToggleAutoRollover={handleToggleAutoRollover}
+              onEjecutarRolloverManual={handleEjecutarRolloverManual}
             />
           )}
         </main>
