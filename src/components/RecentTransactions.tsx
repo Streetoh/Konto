@@ -22,8 +22,12 @@ export const RecentTransactions: React.FC<Props> = ({
 }) => {
   const [transaccionAEditar, setTransaccionAEditar] = useState<TransaccionVariable | null>(null);
 
+  // Mostrar solo movimientos confirmados en Últimos Movimientos.
+  // Los pendientes de aprobación se muestran arriba en la Bandeja de Notificaciones Pendientes
+  const transaccionesConfirmadas = transacciones.filter((tx) => tx.confirmado !== false);
+
   // Ordenar de más reciente a más antigua
-  const transaccionesOrdenadas = [...transacciones].sort((a, b) => {
+  const transaccionesOrdenadas = [...transaccionesConfirmadas].sort((a, b) => {
     return new Date(b.fecha).getTime() - new Date(a.fecha).getTime();
   });
 

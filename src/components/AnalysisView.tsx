@@ -51,12 +51,12 @@ export const AnalysisView: React.FC<Props> = ({
   // 1. Estados para el Buscador Spotlight
   const [terminoBusqueda, setTerminoBusqueda] = useState('');
 
-  // 2. Transacciones del ciclo actual
+  // 2. Transacciones del ciclo actual (solo confirmadas)
   const transaccionesCiclo = useMemo(() => {
     const inicio = resumen.ciclo.fechaInicio.getTime();
     const fin = resumen.ciclo.fechaFin.getTime();
     return transacciones.filter((tx) => {
-      if (!tx.fecha) return false;
+      if (!tx.fecha || tx.confirmado === false) return false;
       const t = new Date(tx.fecha).getTime();
       return t >= inicio && t <= fin;
     });
@@ -74,6 +74,10 @@ export const AnalysisView: React.FC<Props> = ({
     return map;
   }, [categorias]);
 
+  const transaccionesValidas = useMemo(() => {
+    return transacciones.filter((tx) => tx.confirmado !== false);
+  }, [transacciones]);
+
   // -------------------------------------------------------------
   // HERRAMIENTA 1: BUSCADOR GLOBAL INSTANTÁNEO (SPOTLIGHT)
   // -------------------------------------------------------------
@@ -87,7 +91,7 @@ export const AnalysisView: React.FC<Props> = ({
       const op = opMatch[1];
       const valor = parseFloat(opMatch[2].replace(',', '.'));
       if (!isNaN(valor)) {
-        return transacciones.filter((tx) => {
+        return transaccionesValidas.filter((tx) => {
           if (op === '>') return tx.importe > valor;
           if (op === '>=') return tx.importe >= valor;
           if (op === '<') return tx.importe < valor;
@@ -109,7 +113,7 @@ export const AnalysisView: React.FC<Props> = ({
       const op = combinedMatch[2];
       const valor = parseFloat(combinedMatch[3].replace(',', '.'));
 
-      return transacciones.filter((tx) => {
+      return transaccionesValidas.filter((tx) => {
         const cat = categoriasMap.get(tx.categoriaId);
         const catNombre = cat ? cat.nombre.toLowerCase() : '';
         const coincideTexto =
@@ -128,7 +132,7 @@ export const AnalysisView: React.FC<Props> = ({
 
     // Búsqueda por texto (comercio o categoría) o número directo
     const queryLower = q.toLowerCase();
-    return transacciones.filter((tx) => {
+    return transaccionesValidas.filter((tx) => {
       const cat = categoriasMap.get(tx.categoriaId);
       const catNombre = cat ? cat.nombre.toLowerCase() : '';
       const coincideTexto =
@@ -141,7 +145,7 @@ export const AnalysisView: React.FC<Props> = ({
       }
       return false;
     });
-  }, [terminoBusqueda, transacciones, categoriasMap]);
+  }, [terminoBusqueda, transaccionesValidas, categoriasMap]);
 
   const totalAcumuladoBusqueda = useMemo(() => {
     return resultadosBusqueda.reduce((acc, tx) => {

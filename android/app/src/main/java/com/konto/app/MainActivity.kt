@@ -70,6 +70,9 @@ class MainActivity : AppCompatActivity() {
         var activeInstance: MainActivity? = null
     }
 
+    @Volatile
+    var isActivityResumed = false
+
     // Interfaz Javascript expuesta como window.AndroidBridge
     inner class AndroidBridge {
         @JavascriptInterface
@@ -511,6 +514,7 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         activeInstance = this
+        isActivityResumed = true
         BankNotificationListener.requestRebindIfPossible(this)
         if (isPageLoaded) {
             drenarNotificacionesPendientes()
@@ -520,6 +524,11 @@ class MainActivity : AppCompatActivity() {
                 null
             )
         }
+    }
+
+    override fun onPause() {
+        super.onPause()
+        isActivityResumed = false
     }
 
     override fun onDestroy() {
@@ -624,6 +633,21 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
+     * Descarta una transacción en tiempo real en React cuando se pulsa Denegar en la barra de Android
+     */
+    fun discardTransactionFromNotification(txId: String) {
+        runOnUiThread {
+            val safeTxId = escapeJsString(txId)
+            val jsCode = """
+                if (typeof window !== 'undefined' && typeof window.onKontoNotificationDiscarded === 'function') {
+                    window.onKontoNotificationDiscarded('$safeTxId');
+                }
+            """.trimIndent()
+            webView.evaluateJavascript(jsCode, null)
+        }
+    }
+
+    /**
      * Inyecta la notificación en la aplicación React ejecutando window.onBankNotificationReceived()
      */
     fun dispatchNotification(title: String, text: String, packageName: String) {
@@ -670,14 +694,59 @@ class MainActivity : AppCompatActivity() {
         try {
             val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
-            // 1. Drenar confirmaciones pendientes
             val confirmedJson = prefs.getString("confirmed_tx_ids", "[]") ?: "[]"
             val confirmedArray = JSONArray(confirmedJson)
-            if (confirmedArray.length() > 0) {
-                val list = mutableListOf<String>()
-                for (i in 0 until confirmedArray.length()) {
-                    list.add("'" + escapeJsString(confirmedArray.getString(i)) + "'")
+            val confirmedSet = mutableSetOf<String>()
+            for (i in 0 until confirmedArray.length()) {
+                confirmedSet.add(confirmedArray.getString(i))
+            }
+
+            val discardedJson = prefs.getString("discarded_tx_ids", "[]") ?: "[]"
+            val discardedArray = JSONArray(discardedJson)
+            val discardedSet = mutableSetOf<String>()
+            for (i in 0 until discardedArray.length()) {
+                discardedSet.add(discardedArray.getString(i))
+            }
+
+            // 1. Drenar notificaciones pendientes
+            val jsonString = prefs.getString(KEY_PENDING, "[]") ?: "[]"
+            val array = JSONArray(jsonString)
+
+            if (array.length() > 0) {
+                Log.i(TAG, "Drenando ${array.length()} notificaciones pendientes acumuladas en segundo plano...")
+
+                for (i in 0 until array.length()) {
+                    val item = array.getJSONObject(i)
+                    val title = item.optString("title", "")
+                    val text = item.optString("text", "")
+                    val pkg = item.optString("packageName", "")
+                    val txId = item.optString("txId", "")
+                    val monto = item.optDouble("monto", 0.0)
+                    val comercio = item.optString("comercio", "")
+                    val catId = item.optString("categoriaId", "")
+                    val catNombre = item.optString("nombreCategoria", "")
+
+                    if (discardedSet.contains(txId)) {
+                        Log.d(TAG, "Notificación omitida por descarte previo: $txId")
+                        continue
+                    }
+
+                    val isConfirmed = confirmedSet.contains(txId) || item.optBoolean("confirmado", false)
+
+                    if (txId.isNotEmpty() && monto > 0) {
+                        dispatchTransactionDetails(title, text, pkg, txId, monto, comercio, catId, catNombre, isConfirmed)
+                    } else {
+                        dispatchNotification(title, text, pkg)
+                    }
                 }
+
+                // Limpiar la cola tras procesarla
+                prefs.edit().putString(KEY_PENDING, "[]").apply()
+            }
+
+            // 2. Si había confirmaciones batch para transacciones ya cargadas en React
+            if (confirmedSet.isNotEmpty()) {
+                val list = confirmedSet.map { "'" + escapeJsString(it) + "'" }
                 val jsConfirmed = """
                     if (typeof window !== 'undefined' && typeof window.onKontoBatchConfirmTransactions === 'function') {
                         window.onKontoBatchConfirmTransactions([${list.joinToString(",")}]);
@@ -687,35 +756,17 @@ class MainActivity : AppCompatActivity() {
                 prefs.edit().putString("confirmed_tx_ids", "[]").apply()
             }
 
-            // 2. Drenar notificaciones pendientes
-            val jsonString = prefs.getString(KEY_PENDING, "[]") ?: "[]"
-            val array = JSONArray(jsonString)
-
-            if (array.length() == 0) return
-
-            Log.i(TAG, "Drenando ${array.length()} notificaciones pendientes acumuladas en segundo plano...")
-
-            for (i in 0 until array.length()) {
-                val item = array.getJSONObject(i)
-                val title = item.optString("title", "")
-                val text = item.optString("text", "")
-                val pkg = item.optString("packageName", "")
-                val txId = item.optString("txId", "")
-                val monto = item.optDouble("monto", 0.0)
-                val comercio = item.optString("comercio", "")
-                val catId = item.optString("categoriaId", "")
-                val catNombre = item.optString("nombreCategoria", "")
-                val confirmado = item.optBoolean("confirmado", false)
-
-                if (txId.isNotEmpty() && monto > 0) {
-                    dispatchTransactionDetails(title, text, pkg, txId, monto, comercio, catId, catNombre, confirmado)
-                } else {
-                    dispatchNotification(title, text, pkg)
-                }
+            // 3. Si había descartes batch para transacciones ya cargadas en React
+            if (discardedSet.isNotEmpty()) {
+                val list = discardedSet.map { "'" + escapeJsString(it) + "'" }
+                val jsDiscarded = """
+                    if (typeof window !== 'undefined' && typeof window.onKontoBatchDiscardTransactions === 'function') {
+                        window.onKontoBatchDiscardTransactions([${list.joinToString(",")}]);
+                    }
+                """.trimIndent()
+                webView.evaluateJavascript(jsDiscarded, null)
+                prefs.edit().putString("discarded_tx_ids", "[]").apply()
             }
-
-            // Limpiar la cola tras procesarla
-            prefs.edit().putString(KEY_PENDING, "[]").apply()
         } catch (e: Exception) {
             Log.e(TAG, "Error drenando notificaciones pendientes", e)
         }

@@ -47,12 +47,13 @@
             </intent-filter>
         </service>
 
-        <!-- Receptor para acciones rápidas de las notificaciones (Aceptar gasto) -->
+        <!-- Receptor para acciones rápidas de las notificaciones (Aceptar o Denegar gasto) -->
         <receiver
             android:name=".NotificationActionReceiver"
             android:exported="false">
             <intent-filter>
                 <action android:name="com.konto.app.ACTION_ACCEPT_TX" />
+                <action android:name="com.konto.app.ACTION_DENY_TX" />
             </intent-filter>
         </receiver>
 

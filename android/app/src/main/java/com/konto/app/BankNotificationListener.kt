@@ -187,9 +187,21 @@ class BankNotificationListener : NotificationListenerService() {
             nombreCategoria = nombreCategoria
         )
 
-        // 6. Si MainActivity está en ejecución, inyectar inmediatamente en el WebView
+        // 6. SIEMPRE guardar en SharedPreferences para garantizar que la app nunca la pierda
+        guardarEnColaPendientes(
+            title = title,
+            text = text,
+            packageName = packageName,
+            txId = txId,
+            monto = monto,
+            comercio = comercio,
+            categoriaId = categoriaId,
+            nombreCategoria = nombreCategoria
+        )
+
+        // 7. Si MainActivity está visible en primer plano (resumed), notificar también en tiempo real
         val activity = MainActivity.activeInstance
-        if (activity != null && !activity.isFinishing && !activity.isDestroyed) {
+        if (activity != null && !activity.isFinishing && !activity.isDestroyed && activity.isActivityResumed) {
             activity.dispatchTransactionDetails(
                 title = title,
                 text = text,
@@ -200,18 +212,6 @@ class BankNotificationListener : NotificationListenerService() {
                 categoriaId = categoriaId,
                 nombreCategoria = nombreCategoria,
                 confirmado = false
-            )
-        } else {
-            // 7. Si la app está en segundo plano o cerrada, guardar en SharedPreferences con todos los detalles
-            guardarEnColaPendientes(
-                title = title,
-                text = text,
-                packageName = packageName,
-                txId = txId,
-                monto = monto,
-                comercio = comercio,
-                categoriaId = categoriaId,
-                nombreCategoria = nombreCategoria
             )
         }
     }

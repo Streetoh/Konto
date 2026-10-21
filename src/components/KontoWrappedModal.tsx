@@ -97,7 +97,7 @@ export const KontoWrappedModal: React.FC<Props> = ({
     // Top Comercio #1 de todo el año (agregado de transacciones históricas)
     const mapaComercios = new Map<string, { total: number; visitas: number; nombre: string }>();
     transacciones.forEach((tx) => {
-      if (tx.tipo === 'gasto') {
+      if (tx.tipo === 'gasto' && tx.confirmado !== false) {
         const norm = (tx.comercio || 'Comercio').trim().toUpperCase();
         const item = mapaComercios.get(norm) || {
           nombre: tx.comercio || 'Comercio',

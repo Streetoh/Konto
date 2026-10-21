@@ -204,6 +204,8 @@ export const calcularResumenFinanciero = (
 
   const transaccionesCiclo = transacciones.filter((tx) => {
     if (!tx.fecha) return false;
+    // Las transacciones pendientes de revisión no impactan los cálculos hasta ser confirmadas
+    if (tx.confirmado === false) return false;
     const txTime = new Date(tx.fecha).getTime();
     return txTime >= inicioTimestamp && txTime <= finTimestamp;
   });
@@ -362,7 +364,7 @@ export const calcularRachaDiasVerdes = (
 
     const gastadoEnDia = transacciones
       .filter((tx) => {
-        if (tx.tipo !== 'gasto') return false;
+        if (tx.tipo !== 'gasto' || tx.confirmado === false) return false;
         const t = new Date(tx.fecha).getTime();
         return t >= inicioDia && t <= finDia;
       })
@@ -390,7 +392,7 @@ export const calcularProgresoCategorias = (
   const finTimestamp = ciclo.fechaFin.getTime();
 
   const transaccionesCiclo = transacciones.filter((tx) => {
-    if (!tx.fecha) return false;
+    if (!tx.fecha || tx.confirmado === false) return false;
     const txTime = new Date(tx.fecha).getTime();
     return txTime >= inicioTimestamp && txTime <= finTimestamp && tx.tipo === 'gasto';
   });
@@ -561,7 +563,7 @@ export const ejecutarRolloverDiarioAutomatico = (
     }
 
     const tieneTransacciones = transacciones.some((tx) => {
-      if (!tx.fecha) return false;
+      if (!tx.fecha || tx.confirmado === false) return false;
       const t = new Date(tx.fecha).getTime();
       return t >= inicioDia.getTime() && t <= finDia.getTime();
     });
@@ -581,7 +583,7 @@ export const ejecutarRolloverDiarioAutomatico = (
 
     const ingresosExtraHastaEseDia = transacciones
       .filter((tx) => {
-        if (tx.tipo !== 'ingreso' || !tx.fecha) return false;
+        if (tx.tipo !== 'ingreso' || !tx.fecha || tx.confirmado === false) return false;
         const t = new Date(tx.fecha).getTime();
         return t >= ciclo.fechaInicio.getTime() && t <= finDia.getTime();
       })
@@ -589,7 +591,7 @@ export const ejecutarRolloverDiarioAutomatico = (
 
     const gastadoAntesDeEseDia = transacciones
       .filter((tx) => {
-        if (tx.tipo !== 'gasto' || !tx.fecha) return false;
+        if (tx.tipo !== 'gasto' || !tx.fecha || tx.confirmado === false) return false;
         const t = new Date(tx.fecha).getTime();
         return t >= ciclo.fechaInicio.getTime() && t < inicioDia.getTime();
       })
@@ -625,7 +627,7 @@ export const ejecutarRolloverDiarioAutomatico = (
 
     const gastadoEnEseDia = transacciones
       .filter((tx) => {
-        if (tx.tipo !== 'gasto' || !tx.fecha) return false;
+        if (tx.tipo !== 'gasto' || !tx.fecha || tx.confirmado === false) return false;
         const t = new Date(tx.fecha).getTime();
         return t >= inicioDia.getTime() && t <= finDia.getTime();
       })

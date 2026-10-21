@@ -222,6 +222,7 @@ export function App() {
     const nuevaTx: TransaccionVariable = {
       ...nueva,
       id: `tx-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+      confirmado: true,
     };
     setTransacciones((prev) => [nuevaTx, ...prev]);
   };
@@ -536,15 +537,6 @@ export function App() {
 
     // Gasto detectado enriquecido desde Android
     window.onKontoExpenseDetected = (data: GastoDetectadoPayload) => {
-      // Evitar duplicados rápidos en React dentro de 10s
-      const key = `${data.importe.toFixed(2)}_${data.comercio.toUpperCase()}`;
-      const ahora = Date.now();
-      const previo = ultimosGastosDetectadosRef.current.get(key) || 0;
-      if (ahora - previo < 10000) {
-        return;
-      }
-      ultimosGastosDetectadosRef.current.set(key, ahora);
-
       const nuevaTx: TransaccionVariable = {
         id: data.id,
         fecha: new Date().toISOString(),
@@ -557,7 +549,25 @@ export function App() {
       };
 
       setTransacciones((prev) => {
-        if (prev.some((t) => t.id === data.id)) return prev;
+        const index = prev.findIndex((t) => t.id === data.id);
+        if (index >= 0) {
+          if (data.confirmado && !prev[index].confirmado) {
+            const actualizadas = [...prev];
+            actualizadas[index] = { ...actualizadas[index], confirmado: true };
+            return actualizadas;
+          }
+          return prev;
+        }
+
+        // Evitar duplicados por ráfagas en React (misma compra y comercio en 5s)
+        const key = `${data.importe.toFixed(2)}_${data.comercio.toUpperCase()}`;
+        const ahora = Date.now();
+        const previo = ultimosGastosDetectadosRef.current.get(key) || 0;
+        if (ahora - previo < 5000) {
+          return prev;
+        }
+        ultimosGastosDetectadosRef.current.set(key, ahora);
+
         return [nuevaTx, ...prev];
       });
 
@@ -585,6 +595,12 @@ export function App() {
       );
     };
 
+    // Descarte rápido desde acción de la notificación ("✕ Denegar")
+    window.onKontoNotificationDiscarded = (txId: string) => {
+      vibrate(15);
+      setTransacciones((prev) => prev.filter((t) => t.id !== txId));
+    };
+
     // Abrir modal de modificar categoría desde acción ("✎ Modificar")
     window.onKontoOpenModifyCategory = (txId: string) => {
       pendingModifyTxIdRef.current = txId;
@@ -607,6 +623,13 @@ export function App() {
       );
     };
 
+    // Descartes acumulados offline
+    window.onKontoBatchDiscardTransactions = (txIds: string[]) => {
+      if (!txIds || txIds.length === 0) return;
+      const setIds = new Set(txIds);
+      setTransacciones((prev) => prev.filter((t) => !setIds.has(t.id)));
+    };
+
     // Verificación de rollover invocada desde Android onResume
     window.onKontoCheckRollover = () => {
       ejecutarVerificacionRollover(true);
@@ -616,8 +639,10 @@ export function App() {
       delete window.onBankNotificationReceived;
       delete window.onKontoExpenseDetected;
       delete window.onKontoNotificationConfirmed;
+      delete window.onKontoNotificationDiscarded;
       delete window.onKontoOpenModifyCategory;
       delete window.onKontoBatchConfirmTransactions;
+      delete window.onKontoBatchDiscardTransactions;
       delete window.onKontoCheckRollover;
     };
   }, [handleSimularTextoNotificacion, ejecutarVerificacionRollover]);

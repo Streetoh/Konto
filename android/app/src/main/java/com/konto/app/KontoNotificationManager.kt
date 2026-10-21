@@ -228,7 +228,22 @@ object KontoNotificationManager {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        // Acción 2: "✎ Modificar" (Abre la app directamente en el modal de cambiar categoría)
+        // Acción 2: "✕ Denegar" (Descarta el gasto por completo)
+        val denyIntent = Intent(context, NotificationActionReceiver::class.java).apply {
+            action = "com.konto.app.ACTION_DENY_TX"
+            putExtra("tx_id", txId)
+            putExtra("notif_id", notifId)
+            putExtra("amount", montoFormateado)
+            putExtra("comercio", comercio)
+        }
+        val denyPendingIntent = PendingIntent.getBroadcast(
+            context,
+            notifId * 10 + 2,
+            denyIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        // Acción 3: "✎ Modificar" (Abre la app directamente en el modal de cambiar categoría)
         val modifyIntent = Intent(context, MainActivity::class.java).apply {
             action = "com.konto.app.ACTION_MODIFY_CATEGORY"
             putExtra("action", "modify_category")
@@ -237,7 +252,7 @@ object KontoNotificationManager {
         }
         val modifyPendingIntent = PendingIntent.getActivity(
             context,
-            notifId * 10 + 2,
+            notifId * 10 + 3,
             modifyIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
@@ -253,6 +268,7 @@ object KontoNotificationManager {
             .setOnlyAlertOnce(true)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .addAction(0, "✓ Aceptar", acceptPendingIntent)
+            .addAction(0, "✕ Denegar", denyPendingIntent)
             .addAction(0, "✎ Modificar", modifyPendingIntent)
 
         notificationManager.notify(notifId, builder.build())

@@ -48,7 +48,7 @@ export const CierreCicloModal: React.FC<Props> = ({
     const inicio = resumen.ciclo.fechaInicio.getTime();
     const fin = resumen.ciclo.fechaFin.getTime();
     return transacciones.filter((tx) => {
-      if (!tx.fecha || tx.tipo !== 'gasto') return false;
+      if (!tx.fecha || tx.tipo !== 'gasto' || tx.confirmado === false) return false;
       const t = new Date(tx.fecha).getTime();
       return t >= inicio && t <= fin;
     });

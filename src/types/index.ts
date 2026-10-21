@@ -200,8 +200,10 @@ declare global {
     ) => void;
     onKontoExpenseDetected?: (data: GastoDetectadoPayload) => void;
     onKontoNotificationConfirmed?: (txId: string) => void;
+    onKontoNotificationDiscarded?: (txId: string) => void;
     onKontoOpenModifyCategory?: (txId: string) => void;
     onKontoBatchConfirmTransactions?: (txIds: string[]) => void;
+    onKontoBatchDiscardTransactions?: (txIds: string[]) => void;
     onPermissionStatusChecked?: (granted: boolean) => void;
     onOcrResult?: (data: OcrResultPayload) => void;
     onOcrError?: (error: string) => void;
