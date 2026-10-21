@@ -222,6 +222,11 @@ declare global {
       vibrate?: (ms: number) => void;
       syncCategoriesAndDictionary?: (categoriesJson: string, dictionaryJson: string) => void;
       showRolloverNotification?: (importe: number, diasTexto: string) => void;
+      notifyReactReady?: () => void;
+      getPendingTransactionsJson?: () => string;
+      getConfirmedTxIdsJson?: () => string;
+      getDiscardedTxIdsJson?: () => string;
+      acknowledgeTransactionsProcessed?: (txIdsJson: string) => void;
     };
   }
 }

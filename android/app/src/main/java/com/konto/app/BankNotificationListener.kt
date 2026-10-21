@@ -199,9 +199,9 @@ class BankNotificationListener : NotificationListenerService() {
             nombreCategoria = nombreCategoria
         )
 
-        // 7. Si MainActivity está visible en primer plano (resumed), notificar también en tiempo real
+        // 7. Si MainActivity está visible en primer plano y React listo, notificar también en tiempo real
         val activity = MainActivity.activeInstance
-        if (activity != null && !activity.isFinishing && !activity.isDestroyed && activity.isActivityResumed) {
+        if (activity != null && !activity.isFinishing && !activity.isDestroyed && activity.isActivityResumed && activity.isReactReady) {
             activity.dispatchTransactionDetails(
                 title = title,
                 text = text,

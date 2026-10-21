@@ -108,7 +108,6 @@ export function App() {
   const diccionarioRef = useRef(diccionario);
   const categoriasRef = useRef(categorias);
   const pendingModifyTxIdRef = useRef<string | null>(null);
-  const ultimosGastosDetectadosRef = useRef<Map<string, number>>(new Map());
 
   useEffect(() => {
     diccionarioRef.current = diccionario;
@@ -235,6 +234,13 @@ export function App() {
 
   const handleEliminarTransaccion = (id: string) => {
     setTransacciones((prev) => prev.filter((tx) => tx.id !== id));
+    if (typeof window !== 'undefined' && window.AndroidBridge?.acknowledgeTransactionsProcessed) {
+      try {
+        window.AndroidBridge.acknowledgeTransactionsProcessed(JSON.stringify([id]));
+      } catch (e) {
+        console.warn('Error acknowledging deleted transaction:', e);
+      }
+    }
   };
 
   // Confirmación en 1-Toque con Autoaprendizaje
@@ -250,6 +256,14 @@ export function App() {
         t.id === txId ? { ...t, categoriaId, confirmado: true } : t
       )
     );
+
+    if (typeof window !== 'undefined' && window.AndroidBridge?.acknowledgeTransactionsProcessed) {
+      try {
+        window.AndroidBridge.acknowledgeTransactionsProcessed(JSON.stringify([txId]));
+      } catch (e) {
+        console.warn('Error acknowledging confirmed transaction:', e);
+      }
+    }
 
     // 2. Autoaprendizaje: asociar palabra clave al diccionario
     const palabraClave = extraerPalabraClaveParaAprender(nombreComercio);
@@ -537,6 +551,7 @@ export function App() {
 
     // Gasto detectado enriquecido desde Android
     window.onKontoExpenseDetected = (data: GastoDetectadoPayload) => {
+      const isConfirmed = Boolean(data.confirmado);
       const nuevaTx: TransaccionVariable = {
         id: data.id,
         fecha: new Date().toISOString(),
@@ -544,29 +559,20 @@ export function App() {
         tipo: 'gasto',
         comercio: data.comercio,
         categoriaId: data.categoriaId,
-        confirmado: Boolean(data.confirmado),
+        confirmado: isConfirmed,
         origenNotificacion: true,
       };
 
       setTransacciones((prev) => {
         const index = prev.findIndex((t) => t.id === data.id);
         if (index >= 0) {
-          if (data.confirmado && !prev[index].confirmado) {
+          if (isConfirmed && !prev[index].confirmado) {
             const actualizadas = [...prev];
             actualizadas[index] = { ...actualizadas[index], confirmado: true };
             return actualizadas;
           }
           return prev;
         }
-
-        // Evitar duplicados por ráfagas en React (misma compra y comercio en 5s)
-        const key = `${data.importe.toFixed(2)}_${data.comercio.toUpperCase()}`;
-        const ahora = Date.now();
-        const previo = ultimosGastosDetectadosRef.current.get(key) || 0;
-        if (ahora - previo < 5000) {
-          return prev;
-        }
-        ultimosGastosDetectadosRef.current.set(key, ahora);
 
         return [nuevaTx, ...prev];
       });
@@ -583,16 +589,30 @@ export function App() {
         importe: data.importe,
         tipo: 'gasto',
         categoriaNombre: data.categoriaNombre,
-        categoriaSugerida: true,
+        categoriaSugerida: !isConfirmed,
+        confirmado: isConfirmed,
       });
     };
 
-    // Confirmación rápida desde acción de la notificación ("✓ Aceptar")
+    // Confirmación rápida desde acción de la notificación ("✓ Aceptar" o tap en la tarjeta)
     window.onKontoNotificationConfirmed = (txId: string) => {
       vibrate(20);
-      setTransacciones((prev) =>
-        prev.map((t) => (t.id === txId ? { ...t, confirmado: true } : t))
-      );
+      setTransacciones((prev) => {
+        const target = prev.find((t) => t.id === txId);
+        if (target) {
+          const cat = categoriasRef.current.find((c) => c.id === target.categoriaId);
+          setToastNotificacion({
+            id: target.id,
+            comercio: target.comercio,
+            importe: target.importe,
+            tipo: target.tipo,
+            categoriaNombre: cat ? cat.nombre : 'Gasto',
+            categoriaSugerida: false,
+            confirmado: true,
+          });
+        }
+        return prev.map((t) => (t.id === txId ? { ...t, confirmado: true } : t));
+      });
     };
 
     // Descarte rápido desde acción de la notificación ("✕ Denegar")
@@ -634,6 +654,61 @@ export function App() {
     window.onKontoCheckRollover = () => {
       ejecutarVerificacionRollover(true);
     };
+
+    // 4.1 Cargar de inmediato transacciones pendientes acumuladas en Android (doble seguridad)
+    if (typeof window !== 'undefined' && window.AndroidBridge?.getPendingTransactionsJson) {
+      try {
+        const pendingStr = window.AndroidBridge.getPendingTransactionsJson();
+        const pendingItems: Array<{
+          txId: string;
+          monto: number;
+          comercio: string;
+          categoriaId: string;
+          nombreCategoria: string;
+          confirmado: boolean;
+        }> = JSON.parse(pendingStr || '[]');
+
+        const confirmedStr = window.AndroidBridge.getConfirmedTxIdsJson?.() || '[]';
+        const confirmedSet = new Set<string>(JSON.parse(confirmedStr || '[]'));
+
+        if (pendingItems.length > 0) {
+          setTransacciones((prev) => {
+            const existentes = new Set(prev.map((t) => t.id));
+            const nuevasParaAgregar: TransaccionVariable[] = [];
+
+            for (const item of pendingItems) {
+              if (!existentes.has(item.txId) && item.monto > 0) {
+                const isConfirmed = Boolean(item.confirmado) || confirmedSet.has(item.txId);
+                nuevasParaAgregar.push({
+                  id: item.txId,
+                  fecha: new Date().toISOString(),
+                  importe: item.monto,
+                  tipo: 'gasto',
+                  comercio: item.comercio,
+                  categoriaId: item.categoriaId,
+                  confirmado: isConfirmed,
+                  origenNotificacion: true,
+                });
+              }
+            }
+
+            if (nuevasParaAgregar.length === 0) return prev;
+            return [...nuevasParaAgregar, ...prev];
+          });
+        }
+      } catch (err) {
+        console.error('Error leyendo transacciones pendientes de AndroidBridge:', err);
+      }
+    }
+
+    // 4.2 Handshake con Android nativo: React está completamente montado y listo
+    if (typeof window !== 'undefined' && window.AndroidBridge?.notifyReactReady) {
+      try {
+        window.AndroidBridge.notifyReactReady();
+      } catch (e) {
+        console.error('Error notificando notifyReactReady a Android:', e);
+      }
+    }
 
     return () => {
       delete window.onBankNotificationReceived;

@@ -46,7 +46,11 @@ class MainActivity : AppCompatActivity() {
     private lateinit var assetLoader: WebViewAssetLoader
     private var isPageLoaded = false
     private var fileUploadCallback: ValueCallback<Array<Uri>>? = null
-    private var pendingModifyTxId: String? = null
+    private var pendingIntentAction: String? = null
+    private var pendingIntentTxId: String? = null
+
+    @Volatile
+    var isReactReady = false
 
     private val fileChooserLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -289,6 +293,103 @@ class MainActivity : AppCompatActivity() {
                 )
             }
         }
+
+        @JavascriptInterface
+        fun notifyReactReady() {
+            Log.i(TAG, "React ha notificado notifyReactReady()")
+            isReactReady = true
+            runOnUiThread {
+                drenarNotificacionesPendientes()
+                notificarEstadoPermisoAReact()
+
+                if (!pendingIntentAction.isNullOrEmpty() && !pendingIntentTxId.isNullOrEmpty()) {
+                    val act = pendingIntentAction
+                    val id = pendingIntentTxId!!
+                    pendingIntentAction = null
+                    pendingIntentTxId = null
+                    if (act == "modify_category") {
+                        val safeTxId = escapeJsString(id)
+                        webView.evaluateJavascript(
+                            "if (typeof window !== 'undefined' && typeof window.onKontoOpenModifyCategory === 'function') { window.onKontoOpenModifyCategory('$safeTxId'); }",
+                            null
+                        )
+                    } else if (act == "view_tx") {
+                        confirmTransactionFromNotification(id)
+                    }
+                }
+            }
+        }
+
+        @JavascriptInterface
+        fun getPendingTransactionsJson(): String {
+            val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            return prefs.getString(KEY_PENDING, "[]") ?: "[]"
+        }
+
+        @JavascriptInterface
+        fun getConfirmedTxIdsJson(): String {
+            val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            return prefs.getString("confirmed_tx_ids", "[]") ?: "[]"
+        }
+
+        @JavascriptInterface
+        fun getDiscardedTxIdsJson(): String {
+            val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            return prefs.getString("discarded_tx_ids", "[]") ?: "[]"
+        }
+
+        @JavascriptInterface
+        fun acknowledgeTransactionsProcessed(txIdsJson: String) {
+            try {
+                val idsArray = JSONArray(txIdsJson)
+                val idsSet = mutableSetOf<String>()
+                for (i in 0 until idsArray.length()) {
+                    idsSet.add(idsArray.getString(i))
+                }
+                if (idsSet.isEmpty()) return
+
+                val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                val pendingJson = prefs.getString(KEY_PENDING, "[]") ?: "[]"
+                val pendingArray = JSONArray(pendingJson)
+                val newPending = JSONArray()
+                for (i in 0 until pendingArray.length()) {
+                    val item = pendingArray.getJSONObject(i)
+                    val id = item.optString("txId", "")
+                    if (!idsSet.contains(id)) {
+                        newPending.put(item)
+                    }
+                }
+
+                val confJson = prefs.getString("confirmed_tx_ids", "[]") ?: "[]"
+                val confArray = JSONArray(confJson)
+                val newConf = JSONArray()
+                for (i in 0 until confArray.length()) {
+                    val id = confArray.getString(i)
+                    if (!idsSet.contains(id)) {
+                        newConf.put(id)
+                    }
+                }
+
+                val discJson = prefs.getString("discarded_tx_ids", "[]") ?: "[]"
+                val discArray = JSONArray(discJson)
+                val newDisc = JSONArray()
+                for (i in 0 until discArray.length()) {
+                    val id = discArray.getString(i)
+                    if (!idsSet.contains(id)) {
+                        newDisc.put(id)
+                    }
+                }
+
+                prefs.edit()
+                    .putString(KEY_PENDING, newPending.toString())
+                    .putString("confirmed_tx_ids", newConf.toString())
+                    .putString("discarded_tx_ids", newDisc.toString())
+                    .apply()
+                Log.d(TAG, "Transacciones confirmadas/drenadas confirmadas por React: ${idsSet.size}")
+            } catch (e: Exception) {
+                Log.e(TAG, "Error en acknowledgeTransactionsProcessed", e)
+            }
+        }
     }
 
     fun checkNotificationPermission(): Boolean {
@@ -365,10 +466,14 @@ class MainActivity : AppCompatActivity() {
         val intentData = intent?.dataString
         val actionExtra = intent?.getStringExtra("action")
         val txIdExtra = intent?.getStringExtra("tx_id")
+        val notifIdExtra = intent?.getIntExtra("notif_id", -1) ?: -1
 
-        if (actionExtra == "modify_category" && !txIdExtra.isNullOrEmpty()) {
-            pendingModifyTxId = txIdExtra
+        if (notifIdExtra != -1) {
+            val nm = getSystemService(Context.NOTIFICATION_SERVICE) as? android.app.NotificationManager
+            nm?.cancel(notifIdExtra)
         }
+
+        procesarIntentGasto(actionExtra, txIdExtra)
 
         val initialUrl = if (intentData?.contains("action=new_expense") == true || actionExtra == "new_expense") {
             "https://appassets.androidplatform.net/assets/dist/index.html?action=new_expense"
@@ -384,17 +489,14 @@ class MainActivity : AppCompatActivity() {
         val intentData = intent.dataString
         val actionExtra = intent.getStringExtra("action")
         val txIdExtra = intent.getStringExtra("tx_id")
+        val notifIdExtra = intent.getIntExtra("notif_id", -1)
 
-        if (actionExtra == "modify_category" && !txIdExtra.isNullOrEmpty()) {
-            runOnUiThread {
-                val safeTxId = escapeJsString(txIdExtra)
-                webView.evaluateJavascript(
-                    "if (typeof window !== 'undefined' && typeof window.onKontoOpenModifyCategory === 'function') { window.onKontoOpenModifyCategory('$safeTxId'); }",
-                    null
-                )
-            }
-            return
+        if (notifIdExtra != -1) {
+            val nm = getSystemService(Context.NOTIFICATION_SERVICE) as? android.app.NotificationManager
+            nm?.cancel(notifIdExtra)
         }
+
+        procesarIntentGasto(actionExtra, txIdExtra)
 
         if (intentData?.contains("action=new_expense") == true || actionExtra == "new_expense") {
             runOnUiThread {
@@ -411,6 +513,35 @@ class MainActivity : AppCompatActivity() {
                 """.trimIndent()
                 webView.evaluateJavascript(jsCode, null)
             }
+        }
+    }
+
+    private fun procesarIntentGasto(actionExtra: String?, txIdExtra: String?) {
+        if (actionExtra.isNullOrEmpty() || txIdExtra.isNullOrEmpty()) return
+
+        if (actionExtra == "modify_category") {
+            if (isReactReady) {
+                val safeTxId = escapeJsString(txIdExtra)
+                runOnUiThread {
+                    webView.evaluateJavascript(
+                        "if (typeof window !== 'undefined' && typeof window.onKontoOpenModifyCategory === 'function') { window.onKontoOpenModifyCategory('$safeTxId'); }",
+                        null
+                    )
+                }
+            } else {
+                pendingIntentAction = "modify_category"
+                pendingIntentTxId = txIdExtra
+            }
+        } else if (actionExtra == "view_tx") {
+            // El usuario pulsó la notificación para añadirla a Últimos Movimientos
+            NotificationActionReceiver.marcarTxConfirmadaOffline(this, txIdExtra)
+            if (isReactReady) {
+                confirmTransactionFromNotification(txIdExtra)
+            } else {
+                pendingIntentAction = "view_tx"
+                pendingIntentTxId = txIdExtra
+            }
+            Toast.makeText(this, "✓ Gasto añadido a Últimos Movimientos", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -479,17 +610,7 @@ class MainActivity : AppCompatActivity() {
                 super.onPageFinished(view, url)
                 Log.d(TAG, "Página cargada en WebView: $url")
                 isPageLoaded = true
-                drenarNotificacionesPendientes()
                 notificarEstadoPermisoAReact()
-
-                if (pendingModifyTxId != null) {
-                    val safeTxId = escapeJsString(pendingModifyTxId!!)
-                    webView.evaluateJavascript(
-                        "if (typeof window !== 'undefined' && typeof window.onKontoOpenModifyCategory === 'function') { window.onKontoOpenModifyCategory('$safeTxId'); }",
-                        null
-                    )
-                    pendingModifyTxId = null
-                }
             }
 
             override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
@@ -516,7 +637,7 @@ class MainActivity : AppCompatActivity() {
         activeInstance = this
         isActivityResumed = true
         BankNotificationListener.requestRebindIfPossible(this)
-        if (isPageLoaded) {
+        if (isReactReady) {
             drenarNotificacionesPendientes()
             notificarEstadoPermisoAReact()
             webView.evaluateJavascript(
@@ -563,7 +684,7 @@ class MainActivity : AppCompatActivity() {
         confirmado: Boolean = false
     ) {
         runOnUiThread {
-            if (!isPageLoaded) {
+            if (!isReactReady) {
                 val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                 val jsonString = prefs.getString(KEY_PENDING, "[]") ?: "[]"
                 val array = JSONArray(jsonString)
@@ -652,7 +773,7 @@ class MainActivity : AppCompatActivity() {
      */
     fun dispatchNotification(title: String, text: String, packageName: String) {
         runOnUiThread {
-            if (!isPageLoaded) {
+            if (!isReactReady) {
                 val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                 val jsonString = prefs.getString(KEY_PENDING, "[]") ?: "[]"
                 val array = JSONArray(jsonString)
@@ -690,7 +811,12 @@ class MainActivity : AppCompatActivity() {
     /**
      * Recupera y procesa cualquier notificación acumulada mientras la app estuvo en background o cerrada.
      */
-    private fun drenarNotificacionesPendientes() {
+    fun drenarNotificacionesPendientes() {
+        if (!isReactReady) {
+            Log.d(TAG, "drenarNotificacionesPendientes omitido: React aún no está listo")
+            return
+        }
+
         try {
             val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 

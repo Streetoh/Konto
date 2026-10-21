@@ -204,6 +204,7 @@ object KontoNotificationManager {
             action = Intent.ACTION_VIEW
             putExtra("action", "view_tx")
             putExtra("tx_id", txId)
+            putExtra("notif_id", notifId)
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
         }
         val tapPendingIntent = PendingIntent.getActivity(
@@ -248,6 +249,7 @@ object KontoNotificationManager {
             action = "com.konto.app.ACTION_MODIFY_CATEGORY"
             putExtra("action", "modify_category")
             putExtra("tx_id", txId)
+            putExtra("notif_id", notifId)
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
         }
         val modifyPendingIntent = PendingIntent.getActivity(

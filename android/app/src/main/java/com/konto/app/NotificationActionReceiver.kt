@@ -14,6 +14,74 @@ class NotificationActionReceiver : BroadcastReceiver() {
         private const val TAG = "KontoNotifAction"
         private const val PREFS_NAME = "konto_prefs"
         private const val KEY_PENDING = "pending_notifications"
+
+        fun marcarTxConfirmadaOffline(context: Context, txId: String) {
+            try {
+                val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                val jsonString = prefs.getString("confirmed_tx_ids", "[]") ?: "[]"
+                val array = JSONArray(jsonString)
+                var yaExiste = false
+                for (i in 0 until array.length()) {
+                    if (array.getString(i) == txId) {
+                        yaExiste = true
+                        break
+                    }
+                }
+                if (!yaExiste) array.put(txId)
+
+                val pendingJson = prefs.getString(KEY_PENDING, "[]") ?: "[]"
+                val pendingArray = JSONArray(pendingJson)
+                for (i in 0 until pendingArray.length()) {
+                    val item = pendingArray.getJSONObject(i)
+                    if (item.optString("txId") == txId) {
+                        item.put("confirmado", true)
+                    }
+                }
+
+                prefs.edit()
+                    .putString("confirmed_tx_ids", array.toString())
+                    .putString(KEY_PENDING, pendingArray.toString())
+                    .apply()
+                Log.d(TAG, "Transacción $txId marcada como confirmada offline")
+            } catch (e: Exception) {
+                Log.e(TAG, "Error guardando confirmación offline", e)
+            }
+        }
+
+        fun marcarTxDescartadaOffline(context: Context, txId: String) {
+            try {
+                val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                val discardedJson = prefs.getString("discarded_tx_ids", "[]") ?: "[]"
+                val discardedArray = JSONArray(discardedJson)
+                var yaExiste = false
+                for (i in 0 until discardedArray.length()) {
+                    if (discardedArray.getString(i) == txId) {
+                        yaExiste = true
+                        break
+                    }
+                }
+                if (!yaExiste) discardedArray.put(txId)
+
+                // Eliminar de pending_notifications si estuviera
+                val pendingJson = prefs.getString(KEY_PENDING, "[]") ?: "[]"
+                val pendingArray = JSONArray(pendingJson)
+                val newPending = JSONArray()
+                for (i in 0 until pendingArray.length()) {
+                    val item = pendingArray.getJSONObject(i)
+                    if (item.optString("txId") != txId) {
+                        newPending.put(item)
+                    }
+                }
+
+                prefs.edit()
+                    .putString("discarded_tx_ids", discardedArray.toString())
+                    .putString(KEY_PENDING, newPending.toString())
+                    .apply()
+                Log.d(TAG, "Transacción $txId marcada como descartada offline")
+            } catch (e: Exception) {
+                Log.e(TAG, "Error guardando descarte offline", e)
+            }
+        }
     }
 
     override fun onReceive(context: Context, intent: Intent) {
@@ -25,7 +93,7 @@ class NotificationActionReceiver : BroadcastReceiver() {
 
         Log.i(TAG, "Acción recibida: $action para txId: $txId")
 
-        // Cancelar la notificación al pulsar Aceptar
+        // Cancelar la notificación al pulsar Aceptar o Denegar
         if (notifId != -1) {
             val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
             notificationManager?.cancel(notifId)
@@ -36,8 +104,8 @@ class NotificationActionReceiver : BroadcastReceiver() {
             marcarTxConfirmadaOffline(context, txId)
 
             val activity = MainActivity.activeInstance
-            if (activity != null && !activity.isFinishing && !activity.isDestroyed && activity.isActivityResumed) {
-                // Notificar en tiempo real al WebView de React si está en primer plano
+            if (activity != null && !activity.isFinishing && !activity.isDestroyed && activity.isActivityResumed && activity.isReactReady) {
+                // Notificar en tiempo real al WebView de React si está en primer plano y listo
                 activity.confirmTransactionFromNotification(txId)
             }
 
@@ -51,7 +119,7 @@ class NotificationActionReceiver : BroadcastReceiver() {
             marcarTxDescartadaOffline(context, txId)
 
             val activity = MainActivity.activeInstance
-            if (activity != null && !activity.isFinishing && !activity.isDestroyed && activity.isActivityResumed) {
+            if (activity != null && !activity.isFinishing && !activity.isDestroyed && activity.isActivityResumed && activity.isReactReady) {
                 activity.discardTransactionFromNotification(txId)
             }
 
@@ -60,74 +128,6 @@ class NotificationActionReceiver : BroadcastReceiver() {
                 "✕ Cargo ${if (amount.isNotEmpty()) "$amount " else ""}descartado",
                 Toast.LENGTH_SHORT
             ).show()
-        }
-    }
-
-    private fun marcarTxConfirmadaOffline(context: Context, txId: String) {
-        try {
-            val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            val jsonString = prefs.getString("confirmed_tx_ids", "[]") ?: "[]"
-            val array = JSONArray(jsonString)
-            var yaExiste = false
-            for (i in 0 until array.length()) {
-                if (array.getString(i) == txId) {
-                    yaExiste = true
-                    break
-                }
-            }
-            if (!yaExiste) array.put(txId)
-
-            val pendingJson = prefs.getString(KEY_PENDING, "[]") ?: "[]"
-            val pendingArray = JSONArray(pendingJson)
-            for (i in 0 until pendingArray.length()) {
-                val item = pendingArray.getJSONObject(i)
-                if (item.optString("txId") == txId) {
-                    item.put("confirmado", true)
-                }
-            }
-
-            prefs.edit()
-                .putString("confirmed_tx_ids", array.toString())
-                .putString(KEY_PENDING, pendingArray.toString())
-                .apply()
-            Log.d(TAG, "Transacción $txId marcada como confirmada offline")
-        } catch (e: Exception) {
-            Log.e(TAG, "Error guardando confirmación offline", e)
-        }
-    }
-
-    private fun marcarTxDescartadaOffline(context: Context, txId: String) {
-        try {
-            val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            val discardedJson = prefs.getString("discarded_tx_ids", "[]") ?: "[]"
-            val discardedArray = JSONArray(discardedJson)
-            var yaExiste = false
-            for (i in 0 until discardedArray.length()) {
-                if (discardedArray.getString(i) == txId) {
-                    yaExiste = true
-                    break
-                }
-            }
-            if (!yaExiste) discardedArray.put(txId)
-
-            // Eliminar de pending_notifications si estuviera
-            val pendingJson = prefs.getString(KEY_PENDING, "[]") ?: "[]"
-            val pendingArray = JSONArray(pendingJson)
-            val newPending = JSONArray()
-            for (i in 0 until pendingArray.length()) {
-                val item = pendingArray.getJSONObject(i)
-                if (item.optString("txId") != txId) {
-                    newPending.put(item)
-                }
-            }
-
-            prefs.edit()
-                .putString("discarded_tx_ids", discardedArray.toString())
-                .putString(KEY_PENDING, newPending.toString())
-                .apply()
-            Log.d(TAG, "Transacción $txId marcada como descartada offline")
-        } catch (e: Exception) {
-            Log.e(TAG, "Error guardando descarte offline", e)
         }
     }
 }
