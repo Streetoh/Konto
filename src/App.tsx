@@ -529,6 +529,11 @@ export function App() {
   // 4. PUENTE GLOBAL PARA ANDROID (Bridge Hook)
   useEffect(() => {
     window.onBankNotificationReceived = (title = '', text = '', packageName = '') => {
+      // Filtrar estrictamente solo notificaciones de Swedbank (ignorar correos, otras apps, etc.)
+      if (packageName && !packageName.toLowerCase().includes('swedbank')) {
+        return;
+      }
+
       const lowerTitle = title.toLowerCase();
       const esPrefijoBanco =
         lowerTitle.includes('swedbank') ||
@@ -551,6 +556,11 @@ export function App() {
 
     // Gasto detectado enriquecido desde Android
     window.onKontoExpenseDetected = (data: GastoDetectadoPayload) => {
+      // Doble filtro de seguridad: solo aceptar gastos originados en Swedbank si viene packageName
+      if (data.packageName && !data.packageName.toLowerCase().includes('swedbank')) {
+        return;
+      }
+
       const isConfirmed = Boolean(data.confirmado);
       const nuevaTx: TransaccionVariable = {
         id: data.id,

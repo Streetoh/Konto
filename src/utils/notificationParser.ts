@@ -110,6 +110,17 @@ export const procesarTextoNotificacion = (
     }
   }
 
+  // Quitar el importe y símbolos de moneda del comercio si quedaron incluidos
+  if (comercioExtraido) {
+    if (matchImporteTexto) {
+      comercioExtraido = comercioExtraido.replace(matchImporteTexto, ' ');
+    }
+    comercioExtraido = comercioExtraido
+      .replace(/\bEUR\b/gi, ' ')
+      .replace(/[€$£]/g, ' ')
+      .replace(/\d+([.,]\d{1,2})?/g, ' ');
+  }
+
   // Si no coincidió con ningún conector específico, usar la limpieza general
   if (!comercioExtraido) {
     let fallback = texto;

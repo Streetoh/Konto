@@ -97,6 +97,11 @@ object KontoNotificationManager {
 
     private fun limpiarNombreComercio(nombre: String): String {
         return nombre
+            .replace("""(?i)\bEUR\b""".toRegex(), "")
+            .replace("€", "")
+            .replace("$", "")
+            .replace("£", "")
+            .replace("""\b\d+([.,]\d{1,2})?\b""".toRegex(), "")
             .replace("""^["'«»“‘]+|["'«»”’]+$""".toRegex(), "")
             .replace("""^[\s,.:;_\-+/()]+|[\s,.:;_\-+/()]+$""".toRegex(), "")
             .replace("""\s+""".toRegex(), " ")

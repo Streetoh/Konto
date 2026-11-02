@@ -8,6 +8,7 @@
     "build": "tsc -b && vite build",
     "sync:android": "node -e \"const fs=require('fs'); fs.cpSync('dist', 'android/app/src/main/assets/dist', {recursive: true}); console.log('Assets sincronizados con android/app/src/main/assets/dist');\"",
     "build:android": "npm run build && npm run sync:android",
+    "test": "node --experimental-strip-types --test src/tests/*.test.ts",
     "lint": "oxlint",
     "preview": "vite preview"
   },

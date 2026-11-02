@@ -16,7 +16,7 @@ class BankNotificationListener : NotificationListenerService() {
         private const val TAG = "KontoBankListener"
         private const val PREFS_NAME = "konto_prefs"
         private const val KEY_PENDING = "pending_notifications"
-        private const val DEDUPLICATE_WINDOW_MS = 10000L // 10 segundos para la misma compra
+        private const val DEDUPLICATE_WINDOW_MS = 15000L // 15 segundos para la misma compra
 
         private var lastPurchaseKey: String? = null
         private var lastPurchaseTime: Long = 0L
@@ -57,7 +57,14 @@ class BankNotificationListener : NotificationListenerService() {
             return
         }
 
-        // 1. Ignorar notificaciones persistentes (ej. reproductor de música, descargas) y apps del sistema
+        // 1. FILTRADO EXCLUSIVO: Únicamente procesar la app oficial de Swedbank.
+        // Se descartan correos (Gmail, Outlook), apps de compras (Amazon), wallets y cualquier
+        // otra aplicación para evitar la duplicación de gastos al hacer compras online.
+        if (!packageName.contains("swedbank", ignoreCase = true)) {
+            return
+        }
+
+        // 2. Ignorar notificaciones persistentes (ej. reproductor de música, descargas) y apps del sistema
         if (sbn.isOngoing) {
             return
         }
@@ -90,34 +97,13 @@ class BankNotificationListener : NotificationListenerService() {
 
         val combinedContent = "$title $text $subText $infoText".trim()
 
-        // 2. Extraer importe monetario: si no hay un importe numérico positivo, no es una compra
+        // 3. Extraer importe monetario: si no hay un importe numérico positivo, no es una compra
         val monto = KontoNotificationManager.extraerMonto(combinedContent)
         if (monto <= 0.0) {
             return
         }
 
-        // 3. Filtro inteligente para capturar Swedbank, Google Wallet y cualquier app bancaria o de pago
-        val isKnownBankOrWallet = packageName.contains("swedbank", ignoreCase = true) ||
-                packageName.contains("wallet", ignoreCase = true) ||
-                packageName.contains("revolut", ignoreCase = true) ||
-                packageName.contains("bbva", ignoreCase = true) ||
-                packageName.contains("santander", ignoreCase = true) ||
-                packageName.contains("caixabank", ignoreCase = true) ||
-                packageName.contains("caixa", ignoreCase = true) ||
-                packageName.contains("ing", ignoreCase = true) ||
-                packageName.contains("n26", ignoreCase = true) ||
-                packageName.contains("imagin", ignoreCase = true) ||
-                packageName.contains("sabadell", ignoreCase = true) ||
-                packageName.contains("openbank", ignoreCase = true) ||
-                packageName.contains("kutxa", ignoreCase = true) ||
-                packageName.contains("abanca", ignoreCase = true) ||
-                packageName.contains("unicaja", ignoreCase = true) ||
-                packageName.contains("cajarural", ignoreCase = true) ||
-                packageName.contains("wise", ignoreCase = true) ||
-                packageName.contains("paypal", ignoreCase = true) ||
-                packageName.contains("bank", ignoreCase = true) ||
-                packageName.contains("pank", ignoreCase = true)
-
+        // 4. Confirmar que la notificación contiene términos monetarios o de pago
         val hasCurrency = combinedContent.contains("EUR", ignoreCase = true) ||
                 combinedContent.contains("€") ||
                 combinedContent.contains("$") ||
@@ -145,17 +131,14 @@ class BankNotificationListener : NotificationListenerService() {
                 combinedContent.contains("laekumine", ignoreCase = true) ||
                 combinedContent.contains("makse", ignoreCase = true) ||
                 combinedContent.contains("kaarditehing", ignoreCase = true) ||
+                combinedContent.contains("tehing", ignoreCase = true) ||
                 combinedContent.contains("ost", ignoreCase = true)
 
         val hasTransactionPatterns = combinedContent.contains("paid at", ignoreCase = true) ||
                 combinedContent.contains("paid to", ignoreCase = true) ||
                 combinedContent.contains("received from", ignoreCase = true)
 
-        val isFinancialNotification = isKnownBankOrWallet ||
-                (hasCurrency && hasTransactionKeyword) ||
-                hasTransactionPatterns ||
-                combinedContent.contains("swedbank", ignoreCase = true)
-
+        val isFinancialNotification = hasCurrency || hasTransactionKeyword || hasTransactionPatterns
         if (!isFinancialNotification) {
             return
         }
